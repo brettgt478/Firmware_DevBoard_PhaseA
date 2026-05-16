@@ -1,0 +1,58 @@
+# Quartus build artifacts
+projects/*/output_files/
+projects/*/db/
+projects/*/incremental_db/
+projects/*/qdb/
+projects/*/tmp-clearbox/
+projects/*/dni/
+projects/*/sim_setup_*/
+projects/*/build_stage*.log
+
+# Generated IP subdirectories (the .ip files are kept, the regenerated
+# tree under each .ip's basename is not). Pattern matches anything that
+# is not a known source artifact.
+projects/*/ip/baseline_top/
+projects/*/ip/fabric_subsys/*/
+projects/*/ip/hps_subsys/agilex_hps/
+projects/*/ip/hps_subsys/emif_io96b_hps/
+projects/*/ip/niosv_subsys/*/
+projects/*/ip/shell_subsys/*/
+projects/*/baseline_top/
+projects/*/fabric_subsys/
+projects/*/hps_subsys/
+projects/*/niosv_subsys/
+projects/*/shell_subsys/
+projects/*/.qsys_edit/
+
+# Per-stage generated dac_subsys instance (Stage 3 onward)
+ip/dac_subsys/dac_subsys/
+ip/dac_controller_0/dac_controller_0/
+
+# Simulation artifacts
+**/work/
+**/transcript
+**/*.wlf
+**/*.vstf
+**/vsim.dbg
+**/modelsim.ini.bak
+tb_run.log
+sim_log.txt
+
+# Validate metadata log
+projects/*/validate_metadata_log.txt
+
+# OS / editor cruft
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Local user override / scratch
+*.local
+scratch/
+
+# Claude Code workspace
+.claude/

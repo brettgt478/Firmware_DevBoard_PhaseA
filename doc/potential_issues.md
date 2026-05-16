@@ -1,0 +1,269 @@
+# Potential Issues Log
+
+Track design concerns that may surface during integration or hardware bring-up.
+
+---
+
+## ISSUE-001: RegBank Avalon-MM Read Path is Purely Combinational
+
+**Date:** 2026-03-15
+**Module:** `reg_bank.vhd`
+**Status:** Open — monitor during integration
+
+**Description:**
+The `avmm_readdata` output is driven combinationally (no registered output stage). The read data mux (`p_read`) produces valid data in the same cycle that `avmm_read` is asserted. This is valid for Avalon-MM waitrequest-mode slaves with fixed 0-cycle read latency, but introduces two risks:
+
+1. **HPS bridge compatibility:** If the `controller_subsystem_hps` Avalon-MM master expects a `readdatavalid` handshake (variable-latency read), the current design will not work. Need to confirm the HPS lightweight bridge is configured for waitrequest-mode with combinational readdata.
+
+2. **Timing closure:** The combinational path from `avmm_address` through the read mux to `avmm_readdata` may become the critical path as more registers are added. At 200 MHz (`axi_lite_clk`), this is ~5 ns. The case statement fans out across all register blocks and the SPI mapped window mux adds another level. If timing fails, the fix is to register the read output and add 1 cycle of read latency (update `avmm_waitrequest` to hold for 1 cycle on reads).
+
+**Action items:**
+- [ ] Check Quartus Platform Designer settings for lwhps2fpga bridge read latency mode
+- [ ] After synthesis (Step 8), check timing report for `avmm_readdata` path slack
+- [ ] If registered read is needed: add `readdatavalid` port, register `read_data`, assert `readdatavalid` one cycle after `avmm_read` when `wait_req = '0'`
+
+---
+
+## ISSUE-002: SpiBridge Removed (FPGA SPI deprecated)
+
+**Date:** 2026-04-07
+**Module:** ~~`spi_bridge.vhd`~~ (removed)
+**Status:** Closed — files deleted
+
+**Description:**
+`spi_bridge.vhd` and `spi_bridge_tb.vhd` have been removed from the project. AD9176 SPI
+configuration is handled entirely by HPS software (`src/hps/ad9176_fmc_ebz.c`). The
+previous issues (concurrent-access priority and lack of streaming mode) are moot.
+
+---
+
+## ISSUE-003: SpiBridge Removed — see ISSUE-002
+
+**Date:** 2026-04-07
+**Status:** Closed — see ISSUE-002
+
+---
+
+## ISSUE-004: JesdSyncController LMFC Boundary Coincidence Timing
+
+**Date:** 2026-03-16
+**Module:** `jesd_sync_controller.vhd`
+**Status:** Documented — verified by TB-SYNC-004
+
+**Description:**
+When all required links in a sync group become ready on the exact same clock edge that the LMFC boundary counter fires, the FSM transitions `ST_WAIT_LOCK → ST_WAIT_LMFC` on that edge. Since the FSM does not check `lmfc_bound` in the `ST_WAIT_LOCK` state, it must wait until the following clock to evaluate `lmfc_bound` in `ST_WAIT_LMFC`.
+
+Due to registered timing, `lmfc_bound = '1'` persists for exactly one clock. When the FSM enters `ST_WAIT_LMFC` on the same edge that `lmfc_bound` transitions to `'1'`, the `'1'` is still the current value on the next edge, so the FSM successfully transitions to `ST_RUNNING`. No LMFC period is lost in this true-coincidence case.
+
+However, if links become ready **one clock after** the LMFC boundary (the `lmfc_bound = '1'` edge has already passed), the FSM enters `ST_WAIT_LMFC` when `lmfc_bound` has already returned to `'0'` and must wait a full LMFC period (`C_LMFC_PERIOD = 16` link clocks = 64 ns at 250 MHz) for the next boundary.
+
+**Worst-case release latency:** `C_LMFC_PERIOD` link clocks after all links are ready. This is by design — LMFC-aligned release is a JESD204B requirement — but hardware bring-up teams should be aware that release timing varies by up to one full LMFC period depending on when links report ready relative to the LMFC counter.
+
+**Verified in simulation:** TB-SYNC-004 tests the "1 clock after LMFC" case and confirms the FSM correctly waits for the next boundary rather than releasing early.
+
+---
+
+## ISSUE-005: JesdSyncController — Transient Link Glitch Recovery (Fixed)
+
+**Date:** 2026-03-16
+**Module:** `jesd_sync_controller.vhd`
+**Status:** Fixed
+
+**Description:**
+The original `ST_ERROR` state had a conditional exit: it only transitioned back to `ST_WAIT_LOCK` when `grp_all_ready = '0'`. If a link dropped for only one clock and immediately recovered, the FSM would enter `ST_ERROR` but find `grp_all_ready = '1'` on the very next edge, permanently deadlocking in `ST_ERROR` with no exit path.
+
+**Fix applied:** Changed `ST_ERROR` to unconditionally transition to `ST_WAIT_LOCK` (single-clock transient state). The error flag is still set by the sticky error logic in `p_err`, preserving observability. The FSM then follows the normal `ST_WAIT_LOCK → ST_WAIT_LMFC → ST_RUNNING` recovery path.
+
+**Trade-off:** A single-clock glitch now causes a brief data release drop (~16 clocks worst case for LMFC re-alignment) rather than a permanent hang. This is preferable — transient glitches on `txlink_ready` could occur during JESD link training or due to brief signal integrity events on the serial lanes.
+
+**Verified in simulation:** TB-SYNC-005 tests a 1-clock glitch on link 0 and confirms error flag assertion, automatic recovery, and successful re-sync on the next LMFC boundary.
+
+---
+
+## ISSUE-006: Platform Designer Component Ports for `dac_controller_0`
+
+**Date:** 2026-04-07
+**Module:** `dac_controller_0.vhd` (replaces deleted `iq_router.vhd`)
+**Status:** Open — required before synthesis
+
+**Description:**
+`dac_controller_0` is the new top-level entity replacing `iq_router`. The Platform Designer
+component definition must be updated to export the full port list of `dac_controller_0`,
+including both JESD links and the lwhpm2fpga AXI4 bus. SPI ports have been removed (HPS
+software handles SPI directly).
+
+**Action items:**
+- [ ] Update Platform Designer component to match `dac_controller_0` port list
+- [ ] Connect `jesd204_tx_link_clk_clk` to JESD204B GTS IP link clock output
+- [ ] Connect both JESD TX streaming ports (`_jesd204_tx_link_*` and `_p1_jesd204_tx_link_*`)
+- [ ] Verify `lwhpm2fpga_*` AXI4 port widths match the HPS bridge configuration
+- [ ] Regenerate the component and confirm port names match RTL exactly
+
+---
+
+## ISSUE-007: AXI4 Full vs. AXI4-Lite Bridge
+
+**Date:** 2026-04-07
+**Module:** `axi_to_avmm.vhd`, `dac_controller_0.vhd`
+**Status:** Open — monitor during integration
+
+**Description:**
+The HPS `lwhpm2fpga` bridge exports AXI4 (with burst, ID, and lock fields). `AxiToAvmm`
+accepts AXI4 but only forwards the first beat of any burst; burst length is acknowledged
+but remaining beats are dropped. This matches expected lwhpm2fpga behavior (single-beat
+register access), but should be confirmed.
+
+**Risks:**
+1. **Write channel timing:** Bridge waits for simultaneous `awvalid` + `wvalid`. If the HPS
+   issues them on separate cycles the bridge still works (waits in IDLE), with 1 extra cycle
+   latency per write.
+2. **No byte-enable passthrough:** `wstrb` is accepted but not forwarded to RegBank. All
+   writes are full 32-bit. Correct for register access.
+3. **Always-OKAY response:** `bresp` and `rresp` are hardwired to `"00"`. If the HPS expects
+   error responses for unmapped addresses, this will not be provided.
+
+**Action items:**
+- [ ] Confirm lwhpm2fpga always issues single-beat transactions for register access
+- [ ] Confirm HPS AXI master does not require error responses for unmapped addresses
+
+---
+
+## ISSUE-008: Quasi-Static CDC for Sine Wave Gen Configuration
+
+**Date:** 2026-03-18  Updated: 2026-04-07
+**Module:** `dac_controller_0.vhd` (`p_cdc_sine` process)
+**Status:** Open — software-enforced constraint (hardware interlock deferred)
+
+**Description:**
+The `t_sine_csr` record crosses from `clock_sink_clk` (~100–200 MHz) to `txlink_clk`
+(~250 MHz) using a quasi-static CDC pattern. Multi-bit values (frequency words, phase
+offsets, amplitudes) are sampled in the `txlink_clk` domain only while the 2-stage
+synchronized `enable` is `'0'`.
+
+**Safety assumption:** HPS software must write all configuration registers **before**
+asserting `SINE_CTRL[0]`. The `enable` synchronizer adds ≥2 `txlink_clk` cycles of delay,
+during which the multi-bit values must be stable. This is the standard "quasi-static with
+synchronized qualifier" CDC pattern.
+
+**Violation conditions:**
+- Modifying frequency/phase/amplitude registers while `enable = '1'` is unsafe; values
+  may be corrupted on the `txlink_clk` side.
+- The HPS driver must enforce the write-before-enable discipline. A hardware interlock
+  (RegBank ignoring config writes while enable is set) has been evaluated and deferred to
+  software policy.
+
+**Action items:**
+- [ ] Document the write-before-enable requirement in the HPS driver header
+- [ ] Consider adding a hardware interlock in a future revision if software discipline
+      cannot be guaranteed (e.g., multi-threaded access)
+
+---
+
+## ISSUE-009: `lmfc_aligned` Always Reads '0' with Single AD9176
+
+**Date:** 2026-04-07
+**Module:** `dac_controller_0.vhd`, `jesd_sync_controller.vhd`
+**Status:** Open — by design, document for HPS software
+
+**Description:**
+`JesdSyncController.lmfc_aligned` is only `'1'` when both `grp0_state = ST_RUNNING` AND
+`grp1_state = ST_RUNNING`. With a single AD9176 (links 0 and 1 active, links 2 and 3
+permanently tied to `'0'`), group 1 can never reach `ST_RUNNING`. As a result,
+`lmfc_aligned` (bit 6 of `JESD_SYNC_STATUS`) will permanently read `'0'` regardless of
+whether data is flowing correctly.
+
+HPS software must use `group_synced[0]` (bit 4 of `JESD_SYNC_STATUS`) rather than
+`lmfc_aligned` to determine whether the active JESD links are ready.
+
+**Action items:**
+- [ ] Document in HPS driver: poll `group_synced[0]` for single-AD9176 bring-up, not
+      `lmfc_aligned`
+- [ ] Consider adding a `C_NUM_ACTIVE_GROUPS` generic to `JesdSyncController` in a future
+      revision to suppress the inactive group from the `lmfc_aligned` computation
+
+---
+
+## ISSUE-010: `sync_err` Clear/Set Race in Same Clock Cycle
+
+**Date:** 2026-04-07
+**Module:** `jesd_sync_controller.vhd` (`p_err` process)
+**Status:** Open — document only, no RTL change needed
+
+**Description:**
+In `p_err`, the clear assignment (`sync_err_r(i) <= '0'`) occurs before the set assignment
+(`sync_err_r(i) <= '1'`) in the same process. In VHDL, the last assignment to a signal
+variable wins. If `err_clr(i)` and an active link fault are both true in the same clock
+cycle, the error set takes priority and the clear is silently discarded.
+
+This means software cannot clear a `sync_err` bit while the underlying link fault is still
+active — which is the correct behavior. The interaction is not a bug, but it is not
+documented in the source and is not covered by any testbench.
+
+**Action items:**
+- [ ] Add a comment to `p_err` explaining the last-assignment priority
+- [ ] Add a TB-SYNC test case: assert `err_clr` while the corresponding link is still down,
+      verify the flag remains set
+
+---
+
+## ISSUE-011: ES-silicon HPS EMIF retargeted to DDR4-1600 @ 800 MHz; DBI removed
+
+**Date:** 2026-05-15
+**Module:** `projects/agilex5_devkit/ip/hps_subsys/emif_io96b_hps.ip` and
+parent qsys plumbing (`hps_subsys.qsys`, `baseline_top.qsys`, `agilex5_devkit.sv`,
+`agilex5_devkit.qsf`)
+**Status:** Open — Phase B Stage 1 workaround, requires re-evaluation when ES
+silicon supports DDR4-3200
+
+**Description:**
+The upstream 065B baseline-a55 GHRD targets the production part
+`A5ED065BB32AE4S` (speed grade 4) with HPS DDR4 configured at
+**1066.667 MHz** (DDR4-3200AA). Retargeting to the dev kit's ES silicon
+`A5ED065BB32AE6SR0` (speed grade 6, SR0 stepping) triggers
+`Error: emif_io96b_hps.emif_io96b_hps_inst: emif_0_ddr4comp:
+"Memory Operating Frequency" (MEM_OPERATING_FREQ_MHZ) "1066.667" is out of
+range: "666.667" "800"` during ipgenerate. ES silicon HPS EMIF supports a
+maximum of 800 MHz (DDR4-1600).
+
+**Resolution applied (2026-05-15):**
+Replaced the production-stepping IP with the ES-silicon variant from
+`agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/ip/hps_subsys/emif_io96b_hps.ip`:
+
+| Parameter                | Production 065B (was) | ES SR0 (now) |
+| ------------------------ | --------------------- | ------------ |
+| `MEM_OPERATING_FREQ_MHZ` | 1066.667              | 800          |
+| DDR4 speed grade         | 3200AA                | 1600L        |
+| `MEM_TCK_NS`             | 0.937                 | 1.25         |
+| `MEM_TWR_NS`             | 15.0                  | 12.0         |
+| `mem_dbi_n` (DBI port)   | exported, 5-bit Bidir | not exported |
+| `MAIN_SM7_REVA/B`        | REVB                  | REVA         |
+
+The DBI port removal cascaded into edits to:
+- `hps_subsys.qsys` — two `<port name="mem_0_dbi_n">` blocks removed
+- `baseline_top.qsys` — one `<port name="emif_hps_emif_mem_0_mem_dbi_n">` block removed
+- `agilex5_devkit.sv` — `inout wire [4:0] emif_hps_emif_mem_0_mem_dbi_n`
+  port + instantiation `.emif_hps_emif_mem_0_mem_dbi_n(...)` connection removed
+- `agilex5_devkit.qsf` — 5 PIN_ + 5 IO_STANDARD assignments for
+  `emif_hps_emif_mem_0_mem_dbi_n[0..4]` removed (PIN_B119, AC90, V87, H87, B97
+  now unbonded)
+
+**Impact:**
+- HPS DDR4 bandwidth drops from ~25.6 GB/s (DDR4-3200, 40-bit data) to
+  ~12.8 GB/s (DDR4-1600, 40-bit data). Per CLAUDE.md §2 the
+  DAC pipeline is fed via H2F (samples streamed from HPS DRAM) — at
+  Phase B's 500 MSPS × 16-bit × 8 lanes = 8 GB/s peak, the lower
+  bandwidth still leaves headroom but with less margin than the production
+  stepping would.
+- DBI is disabled. Slightly higher DDR4 power consumption due to
+  worst-case data patterns not inverted. Negligible at 800 MHz.
+- 5 FPGA bank-3D pins (PIN_B119, AC90, V87, H87, B97) are now free for
+  future use. They are NOT in the FMC area so don't conflict with
+  Phase B's DAC subsystem.
+
+**Action items:**
+- [ ] When hardware is connected, validate Linux boots cleanly with the
+      retargeted DDR4-1600 EMIF.
+- [ ] If a future ES silicon stepping (SR1, SR2, ...) raises the EMIF cap,
+      reconsider re-promoting to DDR4-3200 and re-enabling DBI.
+- [ ] If production silicon ever lands on the dev kit, restore the original
+      `emif_io96b_hps.ip` and DBI plumbing.

@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dac_controller_0 — Design Diagrams</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg:      #0f1117;
+      --surface: #1a1d27;
+      --border:  #2e3245;
+      --accent:  #4f8ef7;
+      --text:    #d0d4e8;
+      --muted:   #7a80a0;
+      --green:   #3ecf8e;
+      --yellow:  #f5c94c;
+      --red:     #e05c5c;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    header {
+      padding: 32px 48px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 1.6rem; color: var(--accent); }
+    header p  { color: var(--muted); margin-top: 4px; }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 16px 48px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 10;
+    }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      padding: 4px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.82rem;
+    }
+    nav a:hover { background: var(--surface); }
+
+    main { padding: 32px 48px; max-width: 1400px; margin: 0 auto; }
+
+    section {
+      margin-bottom: 56px;
+    }
+    section h2 {
+      font-size: 1.15rem;
+      color: var(--accent);
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    section p.desc {
+      color: var(--muted);
+      margin: 8px 0 18px;
+      font-size: 0.9rem;
+      max-width: 900px;
+    }
+
+    .diagram-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px 32px;
+      overflow-x: auto;
+    }
+    .diagram-wrap .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 0.88rem;
+    }
+    th {
+      background: var(--surface);
+      color: var(--accent);
+      text-align: left;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+    }
+    td {
+      padding: 6px 12px;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    tr:nth-child(even) td { background: #161921; }
+    code {
+      background: #242838;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.9em;
+      color: #a8d0ff;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>dac_controller_0 — Design Diagrams</h1>
+  <p>AD9176-FMC-EBZ FPGA Firmware &nbsp;|&nbsp; Agilex 5 E-Series &nbsp;|&nbsp; VHDL-2008</p>
+</header>
+
+<nav>
+  <a href="#fig1">1 · System Context</a>
+  <a href="#fig2">2 · RTL Hierarchy</a>
+  <a href="#fig3">3 · Data Flow</a>
+  <a href="#fig4">4 · Clock Domains &amp; CDC</a>
+  <a href="#fig5">5 · AXI→AVMM FSM</a>
+  <a href="#fig6">6 · JESD Sync FSM</a>
+  <a href="#fig7">7 · DataSrcMux Logic</a>
+  <a href="#fig8">8 · NCO Pipeline</a>
+  <a href="#fig9">9 · Register Map</a>
+  <a href="#fig10">10 · Integration Sequence</a>
+</nav>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig1">
+  <h2>1 · System Context</h2>
+  <p class="desc">
+    Top-level view of the Agilex 5 SoC, the FPGA IP component, and external hardware.
+    The HPS communicates via two independent paths: AXI register access through
+    <code>lwhpm2fpga</code>, and SPI for AD9176 device configuration.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+graph TB
+    subgraph AGILEX5["Agilex 5 SoC (A5ED052AB32AI2E)"]
+        direction TB
+        subgraph HPS["ARM Hard Processor System (HPS)"]
+            SW["HPS Software\nad9176_fmc_ebz.c"]
+            LWHPS["lwhpm2fpga\nAXI Bridge"]
+            SPIHPS["HPS GPIO / SPI\nPeripheral"]
+            SW --> LWHPS
+            SW --> SPIHPS
+        end
+        subgraph FPGA["FPGA Fabric"]
+            DAC0["dac_controller_0\n(AXI → CSR → NCO → JESD TX)"]
+            JGTS["Intel JESD204B\nGTS IP\n(2 links × 4 lanes)"]
+            DAC0 -- "128-bit streaming\n(link 0 + link 1)" --> JGTS
+            DAC0 -- "JESD reset\nsequencing" --> JGTS
+        end
+        LWHPS -- "AXI4 (10-bit addr,\n32-bit data)" --> DAC0
+    end
+
+    subgraph FMC["AD9176-FMC-EBZ Eval Board"]
+        AD9176["AD9176\nDual DAC Core\n12 GSPS"]
+    end
+
+    JGTS -- "GTS transceivers\n4 lanes × 2 links\nJESD204B" --> AD9176
+    SPIHPS -- "SPI (bit-bang)\n24-bit frames" --> AD9176
+    AD9176 -- "Analog RF\noutput" --> RFOUT["RF Output"]
+
+    classDef hps fill:#1e2a4a,stroke:#4f8ef7,color:#d0d4e8
+    classDef fpga fill:#1a2e1a,stroke:#3ecf8e,color:#d0d4e8
+    classDef ext fill:#2e2010,stroke:#f5c94c,color:#d0d4e8
+    classDef out fill:#2a1a1a,stroke:#e05c5c,color:#d0d4e8
+    class SW,LWHPS,SPIHPS hps
+    class DAC0,JGTS fpga
+    class AD9176 ext
+    class RFOUT out
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig2">
+  <h2>2 · RTL Module Hierarchy</h2>
+  <p class="desc">
+    Internal structure of <code>dac_controller_0</code>. Modules shaded blue run
+    in <code>clock_sink_clk</code>; modules shaded green run in <code>txlink_clk</code>.
+    The CDC boundary is shown explicitly.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+graph TB
+    TOP["dac_controller_0\ntop-level"]
+
+    subgraph CSKDOMAIN["clock_sink_clk domain (100–200 MHz)"]
+        AXI["AxiToAvmm\nu_axi_bridge\nAXI4 slave → AVMM master\n5-state FSM"]
+        REG["RegBank\nu_reg_bank\nAVMM slave CSR\n1 KB / 10-bit address"]
+        AXI -- "Avalon-MM\n10-bit addr / 32-bit data" --> REG
+    end
+
+    CDC["CDC Structures\n(2-stage sync, toggle sync,\nquasi-static capture)"]
+
+    subgraph TXDOMAIN["txlink_clk domain (~250 MHz)"]
+        NCO["SineWaveGen\nu_sine_wave_gen\n4-converter NCO\n8 samples/clk\n1024-entry quarter-wave LUT"]
+        FIFO["DcFifo\nu_dc_fifo\nDual-clock async FIFO\n128-bit × 512 deep\n(write port tied off — Phase A)"]
+        MUX["DataSrcMux\nu_data_src_mux\nLMFC-aligned source select\nNCO / FIFO"]
+        SYNC["JesdSyncController\nu_jesd_sync_ctrl\nLMFC counter + per-group FSM\ndata_release gating"]
+        TXM0["JesdTxManager\nu_jesd_tx_mgr_0\nLink 0 — DAC core A\nMode 4 lane packing"]
+        TXM1["JesdTxManager\nu_jesd_tx_mgr_1\nLink 1 — DAC core B\nMode 4 lane packing"]
+
+        NCO -- "nco_samples\nnco_valid" --> MUX
+        FIFO -- "fifo_samples\nfifo_valid\nfill_level" --> MUX
+        SYNC -- "lmfc_boundary" --> MUX
+        SYNC -- "data_release[0]" --> TXM0
+        SYNC -- "data_release[1]" --> TXM1
+        MUX -- "mux_samples\nmux_valid" --> TXM0
+        MUX -- "mux_samples\nmux_valid" --> TXM1
+    end
+
+    TOP --> AXI
+    TOP --> REG
+    REG -- "t_sine_csr\nt_jesd_sync_csr" --> CDC
+    CDC -- "sine_csr_txclk\nsync_mode_sync\nsrc_sel_sync\nerr_clr_txclk" --> NCO
+    CDC --> SYNC
+    CDC --> MUX
+    TXM0 -- "128-bit lane data\n+ valid" --> JGTS0["→ JESD GTS IP Link 0"]
+    TXM1 -- "128-bit lane data\n+ valid" --> JGTS1["→ JESD GTS IP Link 1"]
+    SYNC -- "status signals" --> CDC
+    MUX -- "src status" --> CDC
+    CDC -- "synchronized status" --> REG
+
+    classDef csk fill:#1e2a4a,stroke:#4f8ef7,color:#d0d4e8
+    classDef txl fill:#1a2e1a,stroke:#3ecf8e,color:#d0d4e8
+    classDef cdc fill:#2e2010,stroke:#f5c94c,color:#d0d4e8
+    class AXI,REG csk
+    class NCO,FIFO,MUX,SYNC,TXM0,TXM1 txl
+    class CDC cdc
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig3">
+  <h2>3 · Data Flow — NCO to DAC</h2>
+  <p class="desc">
+    End-to-end sample data flow from the SineWaveGen NCO through transport layer
+    packing, JESD204B serialization, and into the AD9176 DAC cores.
+    Bit widths and record types are annotated at each stage boundary.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart LR
+    HPS["HPS Software\nWrite NCO config\nassert SINE_CTRL[0]"]
+
+    subgraph NCO_BLOCK["SineWaveGen (txlink_clk)"]
+        PA["Phase Accumulators ×4\n32-bit, +2×freq_word/clk"]
+        ADDR["Address Calc\nphase → LUT addr + quadrant\n(combinational)"]
+        LUT["Quarter-wave BRAM ×4\n1024 × 16-bit\n(dual-port read: S0 + S1)"]
+        SIGN["Sign Correct +\nAmplitude Scale\n16-bit × 17-bit → 33-bit\nextract [30:15]"]
+        PA --> ADDR --> LUT --> SIGN
+    end
+
+    SIGN -- "t_sample_bus\n8 × signed(15:0)\n(m0_s0..m3_s1)" --> MUX
+
+    subgraph MUX_BLOCK["DataSrcMux (txlink_clk)"]
+        MUXSEL["Source MUX\nactive_src: 0=NCO / 1=FIFO\nswitch on LMFC boundary"]
+    end
+
+    MUXSEL -- "mux_samples\nt_sample_bus\n+ mux_valid" --> GATE
+
+    subgraph GATE["data_release gating\n(JesdSyncController)"]
+        AND0["data_release[0]\nAND mux_valid → Link 0"]
+        AND1["data_release[1]\nAND mux_valid → Link 1"]
+    end
+
+    AND0 -- "samples_in\n+ samples_valid" --> TXM0
+
+    AND1 -- "samples_in\n+ samples_valid" --> TXM1
+
+    subgraph TXM0_BLOCK["JesdTxManager 0 (txlink_clk)"]
+        PACK0["Lane Packing\nMode 4: 1 converter/lane\nLane N = MN_S0[15:8]:MN_S0[7:0]:\n        MN_S1[15:8]:MN_S1[7:0]\nt_lane_data → 128-bit vector"]
+    end
+
+    subgraph TXM1_BLOCK["JesdTxManager 1 (txlink_clk)"]
+        PACK1["Lane Packing\n(identical packing)\n128-bit vector"]
+    end
+
+    TXM0_BLOCK -- "jesd204_tx_link_data[127:0]\n+ valid\n(Link 0 — DAC core A)" --> GTSIP0["Intel JESD GTS IP\nLink 0\n8B/10B + scramble\n4 serial lanes"]
+    TXM1_BLOCK -- "jesd204_tx_link_data[127:0]\n+ valid\n(Link 1 — DAC core B)" --> GTSIP1["Intel JESD GTS IP\nLink 1\n8B/10B + scramble\n4 serial lanes"]
+
+    GTSIP0 -- "JESD204B lanes 0–3" --> DACA["AD9176 DAC Core A\n(4 converters)\n6× interp → 12 GSPS"]
+    GTSIP1 -- "JESD204B lanes 0–3" --> DACB["AD9176 DAC Core B\n(4 converters)\n6× interp → 12 GSPS"]
+
+    HPS -.->|"CSR config via\nlwhpm2fpga"| NCO_BLOCK
+
+    classDef hw fill:#2e2010,stroke:#f5c94c,color:#d0d4e8
+    classDef gts fill:#1e2e2e,stroke:#3ecf8e,color:#d0d4e8
+    class DACA,DACB hw
+    class GTSIP0,GTSIP1 gts
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig4">
+  <h2>4 · Clock Domains &amp; CDC Paths</h2>
+  <p class="desc">
+    All signals crossing between <code>clock_sink_clk</code> and
+    <code>txlink_clk</code> and the CDC technique used. Every crossing must
+    be covered by a <code>set_false_path</code> or <code>set_max_delay</code>
+    timing constraint.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+graph LR
+    subgraph CSK["clock_sink_clk domain\n(100–200 MHz)"]
+        R1["RegBank\nt_sine_csr\nt_jesd_sync_csr\njesd_sync_err_clr[3:0]"]
+        R2["jesd_sync_status\n(readback)"]
+    end
+
+    subgraph TX["txlink_clk domain\n(~250 MHz)"]
+        T1["sine_csr_txclk\n(SineWaveGen input)"]
+        T2["sync_mode_sync\nsrc_sel_sync"]
+        T3["err_clr_txclk[3:0]\n(JesdSyncController)"]
+        T4["txlink_ready[3:0]\ngroup_synced[1:0]\nlmfc_aligned\nsync_err[3:0]\nsrc_switch_pending\nsrc_active"]
+    end
+
+    R1 -- "enable: 2-stage sync\n(1 bit)" --> T1
+    R1 -- "config fields: quasi-static\ncapture while enable_sync=0\n(multi-bit — SW protocol)" --> T1
+    R1 -- "sync_mode, src_sel\n2-stage sync (1 bit each)" --> T2
+    R1 -- "err_clr pulse →\ntoggle sync\n(1-bit toggle + edge detect)" --> T3
+    T4 -- "2-stage sync\n(each signal independently)" --> R2
+
+    note1["Reset:\nreset_sink_reset →\ntxlink_rst_meta → txlink_rst\n(2-stage sync in txlink_clk)"]
+
+    classDef csk fill:#1e2a4a,stroke:#4f8ef7,color:#d0d4e8
+    classDef txl fill:#1a2e1a,stroke:#3ecf8e,color:#d0d4e8
+    classDef note fill:#2a2030,stroke:#9070d0,color:#d0d4e8
+    class R1,R2 csk
+    class T1,T2,T3,T4 txl
+    class note1 note
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Signal(s)</th><th>Direction</th><th>CDC Technique</th><th>Notes</th></tr>
+    <tr><td><code>sine_csr.enable</code></td><td>CSK→TX</td><td>2-stage synchronizer</td><td>Enable bit only</td></tr>
+    <tr><td><code>sine_csr</code> config fields</td><td>CSK→TX</td><td>Quasi-static capture</td><td>Captured only while <code>sine_enable_sync=0</code>; SW must configure before enable</td></tr>
+    <tr><td><code>sync_mode</code>, <code>src_sel</code></td><td>CSK→TX</td><td>2-stage synchronizer</td><td>Single-bit quasi-static CSR</td></tr>
+    <tr><td><code>jesd_sync_err_clr[3:0]</code></td><td>CSK→TX</td><td>Toggle synchronizer (pulse)</td><td>RegBank single-cycle pulse → toggle in CSK → sync → edge-detect in TX</td></tr>
+    <tr><td><code>txlink_ready[3:0]</code>, <code>group_synced[1:0]</code>, <code>lmfc_aligned</code>, <code>sync_err[3:0]</code>, <code>src_switch_pending</code>, <code>src_active</code></td><td>TX→CSK</td><td>2-stage synchronizer (each)</td><td>Status readback; ≤4 cycle staleness acceptable</td></tr>
+    <tr><td><code>reset_sink_reset</code></td><td>CSK→TX</td><td>2-stage synchronizer</td><td>Produces <code>txlink_rst</code> for all TX-domain logic</td></tr>
+    <tr><td>FIFO gray pointers</td><td>Both</td><td>2-stage sync (gray-coded)</td><td>Internal to DcFifo; <code>set_max_delay -datapath_only</code> required</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig5">
+  <h2>5 · AxiToAvmm FSM</h2>
+  <p class="desc">
+    The <code>AxiToAvmm</code> module converts AXI4 transactions to Avalon-MM
+    waitrequest-mode transactions. Write has priority over read in
+    <code>S_IDLE</code>. All ready/valid handshakes are single-cycle pulses.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+stateDiagram-v2
+    [*] --> S_IDLE : reset
+
+    S_IDLE --> S_WRITE : awvalid AND wvalid\nassert awready, wready\nlatch addr, wdata, id\navmm_write=1
+    S_IDLE --> S_READ  : arvalid (write takes priority)\nassert arready\nlatch addr, id\navmm_read=1
+
+    S_WRITE --> S_WRITE_RESP : avmm_waitrequest=0\navmm_write=0\nbvalid=1
+    S_WRITE_RESP --> S_IDLE  : bready=1\nbvalid=0
+
+    S_READ --> S_READ_RESP   : avmm_waitrequest=0\navmm_read=0\nlatch rdata\nrvalid=1, rlast=1
+    S_READ_RESP --> S_IDLE   : rready=1\nrvalid=0
+
+    note right of S_IDLE
+      AXI ID echoed on response channels.
+      bresp / rresp always OKAY (0x00).
+      Single-beat only; burst length accepted
+      but only first beat forwarded.
+    end note
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig6">
+  <h2>6 · JesdSyncController FSM</h2>
+  <p class="desc">
+    Two independent identical FSMs (Group 0: links 0+1; Group 1: links 2+3) each
+    wait for all assigned links to assert <code>frame_ready</code>, then align
+    the data release to an LMFC boundary for deterministic latency.
+    Group 1 is permanently stuck in <code>ST_WAIT_LOCK</code> in Phase A
+    (links 2 and 3 are tied low — no second AD9176).
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+stateDiagram-v2
+    direction LR
+    [*] --> ST_WAIT_LOCK : reset / grp_release=0
+
+    ST_WAIT_LOCK --> ST_WAIT_LMFC  : grp_all_ready=1\n(all assigned links frame_ready)
+
+    ST_WAIT_LMFC --> ST_WAIT_LOCK  : grp_all_ready=0\n(link dropped before LMFC)
+    ST_WAIT_LMFC --> ST_RUNNING    : lmfc_bound=1 AND grp_all_ready=1\ngrp_release←1
+
+    ST_RUNNING --> ST_ERROR : grp_all_ready=0\n(link dropout during run)\ngrp_release←0\nsticky sync_err set
+
+    ST_ERROR --> ST_WAIT_LOCK : unconditional (next clock)\n(auto-retry, avoids deadlock\non single-cycle glitch)
+
+    note right of ST_RUNNING
+      grp_release=1 → data_release[n] asserted.
+      LMFC-aligned release guarantees
+      deterministic transport latency.
+    end note
+
+    note right of ST_ERROR
+      sync_err[n] sticky latch set.
+      HPS clears via W1C JESD_SYNC_ERR.
+      Clear propagates via toggle synchronizer.
+    end note
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Condition</th><th>Value</th></tr>
+    <tr><td>LMFC period</td><td>16 <code>txlink_clk</code> cycles (K=32, F=2, 2 frames/clk)</td></tr>
+    <tr><td><code>sync_mode=0</code> (per-DAC)</td><td>Group 0 = links 0+1; Group 1 = links 2+3</td></tr>
+    <tr><td><code>sync_mode=1</code> (all-four)</td><td>Both groups require all 4 links ready simultaneously</td></tr>
+    <tr><td>Phase A active links</td><td>Links 0, 1 only (Group 0); links 2, 3 tied low</td></tr>
+    <tr><td><code>JESD_STATUS[6]</code> <code>lmfc_aligned</code></td><td>Requires <em>both</em> groups in ST_RUNNING — always 0 in Phase A. Use <code>group_synced[0]</code> (bit 4) instead.</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig7">
+  <h2>7 · DataSrcMux — Source Switching Logic</h2>
+  <p class="desc">
+    Double-buffered LMFC-aligned source switching. The shadow register tracks the
+    requested source; it is committed to the active source only on LMFC boundaries
+    (and, for FIFO, only when the fill level meets the pre-fill threshold).
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart TD
+    SW_WRITE["HPS writes\nJESD_TX_SRC_SEL[0]"]
+    SRCSEL["src_sel\n(CSK domain)"]
+    CDC2["2-stage sync\n(into txlink_clk)"]
+    SHADOW["shadow_src\n(txlink_clk)\nlatched every clock"]
+    CMP{"shadow_src\n== active_src?"}
+    NOPEND["pending ← 0\n(no switch needed)"]
+    PEND{"pending=1\nAND\nlmfc_boundary?"}
+    SETPEND["pending ← 1\n(wait for LMFC)"]
+    NCOCHK{"shadow_src=0?\n(switch to NCO)"}
+    FIFOCHK{"fill_level ≥\nG_FILL_THRESHOLD\n(256/512)?"}
+    SWITCHNCO["active_src ← 0\npending ← 0\n(NCO active)"]
+    SWITCHFIFO["active_src ← 1\npending ← 0\n(FIFO active)"]
+    KEEPWAIT["keep pending=1\n(retry next LMFC)"]
+
+    SW_WRITE --> SRCSEL --> CDC2 --> SHADOW --> CMP
+    CMP -- "Yes" --> NOPEND
+    CMP -- "No" --> PEND
+    PEND -- "No (not LMFC yet)" --> SETPEND
+    PEND -- "Yes" --> NCOCHK
+    NCOCHK -- "Yes (to NCO)" --> SWITCHNCO
+    NCOCHK -- "No (to FIFO)" --> FIFOCHK
+    FIFOCHK -- "Yes (threshold met)" --> SWITCHFIFO
+    FIFOCHK -- "No (FIFO low)" --> KEEPWAIT
+
+    subgraph OUTPUT["Output MUX (combinational)"]
+        OUTMUX{"active_src?"}
+        OUTNCO["NCO samples\n(nco_samples / nco_valid)"]
+        OUTFIFO["FIFO samples\n(fifo_samples / fifo_valid)"]
+        OUTMUX -- "0 = NCO" --> OUTNCO
+        OUTMUX -- "1 = FIFO" --> OUTFIFO
+    end
+    SWITCHNCO --> OUTMUX
+    SWITCHFIFO --> OUTMUX
+
+    classDef decision fill:#2a1e38,stroke:#9070d0,color:#d0d4e8
+    class CMP,PEND,NCOCHK,FIFOCHK,OUTMUX decision
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig8">
+  <h2>8 · SineWaveGen NCO Pipeline</h2>
+  <p class="desc">
+    Three-stage pipeline inside <code>SineWaveGen</code>. Stages 1 and 2 are
+    registered; stage 0 is combinational. Total output latency from phase
+    accumulator update to valid sample output is 2 link clock cycles.
+    All four converters execute the same pipeline in parallel.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+flowchart LR
+    subgraph S0["Stage 0 — Combinational"]
+        direction TB
+        PA["phase_acc[i]\n(32-bit, advances\n+2×freq/clk)"]
+        OFS["+ phase_ofs[i]"]
+        S0P["phase_s0 = acc + ofs\nphase_s1 = acc + ofs + freq"]
+        ADDR0["s0_addr = fold(phase_s0)\ns1_addr = fold(phase_s1)\nquadrant bits extracted"]
+        PA --> OFS --> S0P --> ADDR0
+    end
+
+    subgraph S1["Stage 1 — Registered (BRAM read)"]
+        direction TB
+        BRAM["4 × Dual-port BRAM\n(1024 × 16-bit)\nPort A: S0 addr → s0_raw\nPort B: S1 addr → s1_raw"]
+        QDEL["s0_quad_d / s1_quad_d\n(quadrant bits delayed)"]
+        BRAM --- QDEL
+    end
+
+    subgraph S2["Stage 2 — Registered (output)"]
+        direction TB
+        SGN["apply_quadrant_sign(raw, quad)\nquad[1]=1 → negate raw"]
+        AMPL["× amplitude[i]\n(16-bit unsigned)\n33-bit product, extract [30:15]"]
+        OUT["s0_out[i], s1_out[i]\n(16-bit signed)"]
+        SGN --> AMPL --> OUT
+    end
+
+    S0 --> S1 --> S2
+
+    subgraph VALID["Valid pipeline"]
+        PV["pipe_valid[0] ← '1'\npipe_valid[1] ← pipe_valid[0]\nsamples_valid = pipe_valid[1] AND enable"]
+    end
+
+    S2 --> VALID
+    VALID -- "samples_out (t_sample_bus)\n8 × 16-bit / clk" --> DOWNSTREAM["→ DataSrcMux"]
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+    <tr><td>Converters</td><td>4</td><td>M0=DAC-A I, M1=DAC-A Q, M2=DAC-B I, M3=DAC-B Q (by convention)</td></tr>
+    <tr><td>Samples per clock</td><td>2 per converter (8 total)</td><td>S0 = current, S1 = current+1</td></tr>
+    <tr><td>Phase accumulator</td><td>32 bits</td><td>Advance = 2×freq_word (2 samples/clk)</td></tr>
+    <tr><td>LUT type</td><td>Quarter-wave sine</td><td>Stores sin(0..π/2); quadrant bits fold full 360°</td></tr>
+    <tr><td>LUT depth (synthesis)</td><td>1024 entries</td><td>Reduce to 64–128 in testbenches to avoid math_real overhead</td></tr>
+    <tr><td>Output scale</td><td>16-bit signed, full-scale ≈ 32767</td><td>Amplitude register scales from 0x0000–0x7FFF</td></tr>
+    <tr><td>Pipeline latency</td><td>2 <code>txlink_clk</code> cycles</td><td>BRAM read (1) + sign/scale (1)</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig9">
+  <h2>9 · Register Map</h2>
+  <p class="desc">
+    Complete 10-bit (1 KB) Avalon-MM register map. Base address on the
+    <code>lwhpm2fpga</code> bridge is assigned by Platform Designer;
+    update <code>DAC_CTRL_BASE</code> in <code>ad9176_fmc_ebz.h</code> to match.
+    Placeholder: <code>0xFF200000</code>.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+block-beta
+  columns 4
+  block:SCRATCH["Scratchpad (0x000–0x00C)"]:4
+    S0["0x000\nSCRATCH0\nRW"]:1
+    S1["0x004\nSCRATCH1\nRW"]:1
+    S2["0x008\nSCRATCH2\nRW"]:1
+    S3["0x00C\nSCRATCH3\nRW"]:1
+  end
+  block:JESD["JESD TX CSR (0x020–0x034)"]:4
+    JC["0x020\nJESD_SYNC_CTRL\nRW\nbit[0]=sync_mode"]:1
+    JS["0x024\nJESD_SYNC_STATUS\nR\n[3:0]=txlink_ready\n[5:4]=group_synced\n[6]=lmfc_aligned"]:1
+    JE["0x028\nJESD_SYNC_ERR\nR/W1C\n[3:0]=sync_err"]:1
+    BLANK1[" "]:1
+    SS["0x030\nJESD_TX_SRC_SEL\nRW\nbit[0]=src_sel"]:1
+    ST["0x034\nJESD_TX_SRC_STAT\nR\nbit[0]=pending\nbit[1]=active"]:1
+    BLANK2[" "]:1
+    BLANK3[" "]:1
+  end
+  block:SINE["Sine Wave Gen CSR (0x040–0x07C)"]:4
+    SC["0x040\nSINE_CTRL\nRW\nbit[0]=enable\nbits[4:1]=conv_en"]:1
+    BLANK4[" "]:3
+    F0["0x050\nSINE_FREQ_CH1_I\nRW\nM0 freq word"]:1
+    F1["0x054\nSINE_FREQ_CH1_Q\nRW\nM1 freq word"]:1
+    F2["0x058\nSINE_FREQ_CH2_I\nRW\nM2 freq word"]:1
+    F3["0x05C\nSINE_FREQ_CH2_Q\nRW\nM3 freq word"]:1
+    P0["0x060\nSINE_PHASE_M0\nRW"]:1
+    P1["0x064\nSINE_PHASE_M1\nRW"]:1
+    P2["0x068\nSINE_PHASE_M2\nRW"]:1
+    P3["0x06C\nSINE_PHASE_M3\nRW"]:1
+    A0["0x070\nSINE_AMP_M0\nRW\n[15:0]=amplitude\ndef=0x7FFF"]:1
+    A1["0x074\nSINE_AMP_M1\nRW"]:1
+    A2["0x078\nSINE_AMP_M2\nRW"]:1
+    A3["0x07C\nSINE_AMP_M3\nRW"]:1
+  end
+  block:PIO["PIO Stubs (0x080–0x084)"]:4
+    PC["0x080\nPIO_CTRL\nRW (stub)"]:1
+    PS["0x084\nPIO_STATUS\nR (stub)"]:1
+    BLANK5[" "]:2
+  end
+    </div>
+  </div>
+
+  <table>
+    <tr>
+      <th>Register</th><th>Offset</th><th>Access</th><th>Reset Value</th><th>Bit Fields</th>
+    </tr>
+    <tr><td><code>SCRATCH0–3</code></td><td><code>0x000–0x00C</code></td><td>RW</td><td><code>0x00000000</code></td><td>Full 32-bit read/write</td></tr>
+    <tr><td><code>JESD_SYNC_CTRL</code></td><td><code>0x020</code></td><td>RW</td><td><code>0x00000000</code></td><td>[0] sync_mode: 0=per-DAC 2-link, 1=all-four</td></tr>
+    <tr><td><code>JESD_SYNC_STATUS</code></td><td><code>0x024</code></td><td>R</td><td>—</td><td>[3:0] txlink_ready, [5:4] group_synced, [6] lmfc_aligned</td></tr>
+    <tr><td><code>JESD_SYNC_ERR</code></td><td><code>0x028</code></td><td>R/W1C</td><td><code>0x00000000</code></td><td>[3:0] sticky per-link error; write 1 to clear</td></tr>
+    <tr><td><code>JESD_TX_SRC_SEL</code></td><td><code>0x030</code></td><td>RW</td><td><code>0x00000000</code></td><td>[0] 0=NCO, 1=FIFO</td></tr>
+    <tr><td><code>JESD_TX_SRC_STAT</code></td><td><code>0x034</code></td><td>R</td><td>—</td><td>[0] src_switch_pending, [1] src_active</td></tr>
+    <tr><td><code>SINE_CTRL</code></td><td><code>0x040</code></td><td>RW</td><td><code>0x00000000</code></td><td>[0] enable, [4:1] conv_enable M0–M3</td></tr>
+    <tr><td><code>SINE_FREQ_CH1_I</code></td><td><code>0x050</code></td><td>RW</td><td><code>0x00000000</code></td><td>[31:0] M0 frequency word</td></tr>
+    <tr><td><code>SINE_FREQ_CH1_Q</code></td><td><code>0x054</code></td><td>RW</td><td><code>0x00000000</code></td><td>[31:0] M1 frequency word</td></tr>
+    <tr><td><code>SINE_FREQ_CH2_I</code></td><td><code>0x058</code></td><td>RW</td><td><code>0x00000000</code></td><td>[31:0] M2 frequency word</td></tr>
+    <tr><td><code>SINE_FREQ_CH2_Q</code></td><td><code>0x05C</code></td><td>RW</td><td><code>0x00000000</code></td><td>[31:0] M3 frequency word</td></tr>
+    <tr><td><code>SINE_PHASE_M0–M3</code></td><td><code>0x060–0x06C</code></td><td>RW</td><td><code>0x00000000</code></td><td>[31:0] per-converter phase offset</td></tr>
+    <tr><td><code>SINE_AMP_M0–M3</code></td><td><code>0x070–0x07C</code></td><td>RW</td><td><code>0x00007FFF</code></td><td>[15:0] amplitude (0=silence, 0x7FFF=full scale)</td></tr>
+    <tr><td><code>PIO_CTRL</code></td><td><code>0x080</code></td><td>RW</td><td><code>0x00000000</code></td><td>Stub; passed to external PIO</td></tr>
+    <tr><td><code>PIO_STATUS</code></td><td><code>0x084</code></td><td>R</td><td>—</td><td>Stub; reflects external PIO input</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section id="fig10">
+  <h2>10 · HPS Software Integration Sequence</h2>
+  <p class="desc">
+    Bring-up sequence from cold reset to active NCO DAC output.
+    Steps 1–3 must complete successfully before NCO data is enabled.
+  </p>
+  <div class="diagram-wrap">
+    <div class="mermaid">
+sequenceDiagram
+    participant HPS as HPS Software
+    participant FPGA as dac_controller_0
+    participant GTS as JESD GTS IP
+    participant AD9176
+
+    Note over HPS,AD9176: Cold reset released
+
+    HPS->>FPGA: Write / Read SCRATCH0–3 (bridge connectivity test)
+    FPGA-->>HPS: Read back matches written values → AD9176_OK
+
+    HPS->>AD9176: SPI: soft reset (REG 0x000)
+    HPS->>AD9176: SPI: configure DAC PLL (12 GSPS, 6× interp)
+    HPS->>AD9176: SPI: write JESD params (M=4, L=4, F=2, K=32, HD=1, SCR=1)
+    HPS->>AD9176: SPI: read back JESD params for verification
+    HPS->>AD9176: SPI: enable JESD link (REG 0x470 bit 0)
+
+    Note over GTS,AD9176: JESD204B code-group sync (CGS) and\ninitial lane alignment sequence (ILAS)
+
+    AD9176-->>GTS: SYNC~ assertion / deassertion
+    GTS-->>FPGA: frame_ready_export[0:1] asserted
+
+    FPGA->>FPGA: JesdSyncController: ST_WAIT_LOCK → ST_WAIT_LMFC
+    FPGA->>FPGA: JesdSyncController: lmfc_bound → ST_RUNNING\ndata_release[1:0] asserted
+
+    HPS->>FPGA: Poll JESD_SYNC_STATUS\nwait for txlink_ready[1:0]=0x3 AND group_synced[0]=1
+    FPGA-->>HPS: Status: locked and RUNNING
+
+    Note over HPS,FPGA: Write NCO config BEFORE asserting enable
+
+    HPS->>FPGA: Write SINE_FREQ_CH1_I/Q, SINE_FREQ_CH2_I/Q
+    HPS->>FPGA: Write SINE_PHASE_M0–M3 (set Q channels to π/2 offset)
+    HPS->>FPGA: Write SINE_AMP_M0–M3 (default 0x7FFF)
+    HPS->>FPGA: Write SINE_CTRL = 0x1F (enable + all 4 converters)
+
+    Note over FPGA: SineWaveGen begins producing samples\nDataSrcMux active_src=0 (NCO)\nJesdTxManager packs lanes → GTS IP
+
+    GTS-->>AD9176: JESD data frames (8B/10B, scrambled, 4 lanes × 2 links)
+    AD9176-->>HPS: (Optional) read DACPLL_STATUS for PLL lock confirmation
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor:        '#1e2a4a',
+      primaryTextColor:    '#d0d4e8',
+      primaryBorderColor:  '#4f8ef7',
+      lineColor:           '#4f8ef7',
+      secondaryColor:      '#1a2e1a',
+      tertiaryColor:       '#2e2010',
+      background:          '#0f1117',
+      mainBkg:             '#1a1d27',
+      nodeBorder:          '#4f8ef7',
+      clusterBkg:          '#161921',
+      titleColor:          '#4f8ef7',
+      edgeLabelBackground: '#1a1d27',
+      attributeBackgroundColorEven: '#161921',
+      attributeBackgroundColorOdd:  '#1a1d27'
+    },
+    flowchart: { curve: 'basis', useMaxWidth: true },
+    sequence:  { useMaxWidth: true, mirrorActors: false },
+    block:     { useMaxWidth: true }
+  });
+</script>
+</body>
+</html>
