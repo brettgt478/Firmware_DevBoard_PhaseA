@@ -242,9 +242,9 @@ Resolution: associate both `jesd_link*_data` sources with `reset_sink`.
 The actual reset behaviour is gated inside `dac_controller_0` by the
 JESD reset sequencer (`jesd_reset_seq` conduit) and the dc_fifo CDC, so
 pointing at `reset_sink` satisfies the validator without
-misrepresenting the runtime behaviour. Fix applied in commit `91d44ce`.
+misrepresenting the runtime behaviour. Fix applied in commit `2d786e7`.
 
-**If you started Procedure 2.A against pre-`91d44ce` code and saw the
+**If you started Procedure 2.A against pre-`2d786e7` code and saw the
 warnings above**, you must refresh the IP catalog before the fix takes
 effect:
 
