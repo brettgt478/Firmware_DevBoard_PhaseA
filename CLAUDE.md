@@ -218,6 +218,16 @@ These are sticky — every change must respect them or builds fail or hardware b
 | Hardware control plane | System Console via NiosV JTAG master | `dac_controller_0.ID` register reads correctly without booting Linux |
 | Hardware end-to-end | `ad9176-config` from Yocto Linux | Scope shows configured sine wave on AD9176 RF output; JESD link-ready bits asserted |
 
+### Stage closeout: update integration.md and deferred_hw_gates.md
+
+**Every stage's closeout MUST update [doc/integration.md](doc/integration.md).** Two cases:
+
+1. **The stage's verify gate includes a step that the workstation cannot execute** — hardware in the loop, scope probing, Linux boot, Platform Designer GUI inspection, external system access. The step is added to `integration.md` as a numbered `### Procedure N.X` with: goal, hardware requirements, copy-pasteable steps, observable pass criterion, failure-path link to `potential_issues.md`. The matching entry in [doc/deferred_hw_gates.md](doc/deferred_hw_gates.md) cross-references the new procedure.
+
+2. **The stage has no deferred gates** — append a one-line `## Stage N — <name>` section stating "No deferred procedures introduced this stage."
+
+This rule keeps `integration.md` the single buildable instruction sheet for whoever ends up in front of the hardware. Don't bury the procedures in commit messages or PLAN.md status notes — those don't survive into the bring-up engineer's workflow.
+
 ---
 
 ## 8. Open Issues
