@@ -261,6 +261,10 @@ effect:
 **Pass criterion:** with the fix in place, the System Messages pane is
 empty (no red errors, no yellow warnings related to `dac_controller_0`).
 
+**Verified 2026-05-16 (bench, Quartus 26.1 Pro):** all six original
+warnings cleared after applying commit `2d786e7` and refreshing the IP
+catalog. Procedure 2.A passes.
+
 If new warnings appear that are not the four above, capture screenshot
 and log to [potential_issues.md](potential_issues.md) before Stage 3.
 
