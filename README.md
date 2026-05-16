@@ -71,7 +71,7 @@ doc/                      - Architecture, JESD bring-up, issue logs
 | Stage | Goal                                  | Status  |
 | ----- | ------------------------------------- | ------- |
 | 1     | Repo merge & baseline retarget        | **Complete** |
-| 2     | Wrap Phase A as Platform Designer IP  | In progress |
+| 2     | Wrap Phase A as Platform Designer IP  | **Complete** |
 | 3-7   | dac_subsys, FMC SPI, JESD GTS, Linux  | Pending |
 | 8     | System simulation                     | Pending |
 | 9     | Hygiene & doc finalization            | Pending |

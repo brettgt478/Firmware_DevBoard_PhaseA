@@ -161,6 +161,10 @@ Delete `ip/dac_controller_0/dac_controller_0_hw.tcl`; the component disappears f
 
 - AXI4 slave with 4-bit ID may need an `axi_id_width_adapter` insertion at the next stage. Qsys handles this automatically; verify in Stage 3 generate logs.
 
+### Stage 2 status (2026-05-15)
+
+**Complete.** [ip/dac_controller_0/dac_controller_0_hw.tcl](ip/dac_controller_0/dac_controller_0_hw.tcl) created with 14 interface groups (clock_sink, jesd_tx_link_clk, reset_sink, lwhpm2fpga (AXI4 slave, 4-bit ID, 10-bit address, 32-bit data), jesd_link0_data + jesd_link1_data (Avalon-ST sources, 128-bit), jesd_link0_status + jesd_link1_status (conduits), jesd_reset_seq, jesd_refclk_ctrl, jesd_csr_readback, pio_control, pio_status, tx_enbl) and the `G_LUT_DEPTH` generic exposed as an HDL parameter. Verified by `quartus_sh -t build.tcl --project-only` (0 errors, 146 warnings — identical to Stage 1 baseline, no new component-load warnings); Phase A block testbenches still 8/8 SIMULATION PASSED. Used `package require -exact qsys 14.0` per Intel convention.
+
 ---
 
 ## Stage 3 — Build `dac_subsys.qsys` (control plane only, JESD stubbed)
