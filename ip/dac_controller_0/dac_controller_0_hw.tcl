@@ -155,9 +155,18 @@ add_interface_port lwhpm2fpga lwhpm2fpga_rready  rready  Input  1
 
 # =============================================================================
 # Avalon-ST source  JESD link 0 data (128-bit)
+# associatedReset is reset_sink even though the AVST lives in the
+# jesd_tx_link_clk domain: Phase A's jesd_tx_manager + dc_fifo handle the
+# CDC internally, and the real link reset is the JESD-domain jesd_rst_n
+# generated inside dac_controller_0 from the GTS reset acknowledge
+# handshake (jesd_reset_seq conduit). Quartus 26.1 requires the property
+# to be set or it emits "Interface must have an associated reset" warnings
+# at qsys-validate time; pointing at reset_sink satisfies the validator
+# without misrepresenting the actual reset relationship.
 # =============================================================================
 add_interface jesd_link0_data avalon_streaming start
 set_interface_property jesd_link0_data associatedClock     jesd_tx_link_clk
+set_interface_property jesd_link0_data associatedReset     reset_sink
 set_interface_property jesd_link0_data dataBitsPerSymbol   128
 set_interface_property jesd_link0_data readyLatency        0
 add_interface_port jesd_link0_data \
@@ -169,9 +178,11 @@ add_interface_port jesd_link0_data \
 
 # =============================================================================
 # Avalon-ST source  JESD link 1 data (128-bit)
+# See jesd_link0_data note about associatedReset.
 # =============================================================================
 add_interface jesd_link1_data avalon_streaming start
 set_interface_property jesd_link1_data associatedClock     jesd_tx_link_clk
+set_interface_property jesd_link1_data associatedReset     reset_sink
 set_interface_property jesd_link1_data dataBitsPerSymbol   128
 set_interface_property jesd_link1_data readyLatency        0
 add_interface_port jesd_link1_data \

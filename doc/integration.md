@@ -186,25 +186,83 @@ does not expose component-mode API consistently (see commit
    ```
 2. In the IP Catalog pane (left side), expand **Project > Phase B DAC**
    (the GROUP property set in `dac_controller_0_hw.tcl`).
-3. **Pass criteria:**
-   - `DAC Controller (AD9176-FMC-EBZ, Phase A)` appears with the
-     description text from the `_hw.tcl`
-   - Double-click opens the parameter editor; `G_LUT_DEPTH` is editable
-     with default 1024 and an allowed range `16:65536`
-   - Switch to the "Interfaces" tab; expect 14 interfaces:
-     - 2 clock sinks: `clock_sink`, `jesd_tx_link_clk`
-     - 1 reset sink: `reset_sink`
-     - 1 AXI4 slave: `lwhpm2fpga` (4-bit ID, 10-bit addr, 32-bit data)
+3. Double-click `DAC Controller (AD9176-FMC-EBZ, Phase A)`.
+   Platform Designer opens a **New IP Variant** dialog asking where to
+   save the instance parameterization. The dialog appearing is itself
+   positive evidence that the catalog scanner found and parsed the
+   component. Enter:
+   - **File name**: `dac_smoke_check` (throwaway)
+   - **Save in folder**: `scratch/` under the project root  this folder
+     is in `.gitignore` so the generated `.ip` won't be committed.
+   Click **Create** / **OK**.
+4. The IP Parameter Editor opens. Verify:
+   - **Parameters tab**: `G_LUT_DEPTH` is editable, default `1024`,
+     allowed range `16:65536`.
+   - **Signals & Interfaces** tab (Quartus 26.1 Pro; older versions call
+     this "Interfaces"): all 14 interfaces present, colour-coded:
+     - 2 clock sinks: `clock_sink`, `jesd_tx_link_clk` (green)
+     - 1 reset sink: `reset_sink` (brown)
+     - 1 AXI4 slave: `lwhpm2fpga` (blue, 4-bit ID, 10-bit addr, 32-bit data)
      - 2 Avalon-ST sources: `jesd_link0_data`, `jesd_link1_data`
-       (128-bit, readyLatency 0)
+       (orange, 128-bit, readyLatency 0)
      - 8 conduits: `jesd_link0_status`, `jesd_link1_status`,
        `jesd_reset_seq`, `jesd_refclk_ctrl`, `jesd_csr_readback`,
-       `pio_control`, `pio_status`, `tx_enbl`
-   - The "Messages" pane shows zero errors and zero warnings related to
-     `dac_controller_0`
+       `pio_control`, `pio_status`, `tx_enbl` (grey)
+   - **System Messages** pane (bottom): zero red errors.
+5. Close the Parameter Editor with **Cancel** (NOT **Finish**  Finish
+   would commit the instance into `baseline_top.qsys`, which is not what
+   we want at Stage 2).
+6. If you accidentally hit Finish: in the baseline_top system view,
+   right-click the new `dac_controller_0_0` instance and Remove. Delete
+   `scratch/dac_smoke_check.ip` from the filesystem. Save baseline_top.qsys.
 
-4. If parameter validation warnings appear, capture screenshot and log to
-   [potential_issues.md](potential_issues.md) before Stage 3.
+**Known-and-resolved warning history.**
+
+The first run of Procedure 2.A (against commit `0d064b9`) surfaced four
+warnings in System Messages:
+
+```
+Warning: dac_smoke_check.dac_controller_0_0.jesd_link0_data: Interface must have an associated reset
+Warning: dac_smoke_check.dac_controller_0_0.jesd_link1_data: Interface must have an associated reset
+Warning: dac_smoke_check.dac_controller_0_0.jesd_link0_data: dac_controller_0_0.jesd_link0_data does not have an associated reset
+Warning: dac_smoke_check.dac_controller_0_0.jesd_link1_data: dac_controller_0_0.jesd_link1_data does not have an associated reset
+```
+
+Plus two follow-on `Export associatedReset of ...` warnings when the
+interfaces were exported as conduits in the throwaway system.
+
+Root cause: Quartus 26.1 Pro requires every Avalon-ST source to declare
+`associatedReset`. The original `_hw.tcl` left it unset because the
+JESD-link AVST sources live in `jesd_tx_link_clk` (~250 MHz) while the
+only declared reset interface (`reset_sink`) lives in `clock_sink_clk`
+(100 MHz) and Phase A's RTL does not export a separate JESD-domain
+reset port.
+
+Resolution: associate both `jesd_link*_data` sources with `reset_sink`.
+The actual reset behaviour is gated inside `dac_controller_0` by the
+JESD reset sequencer (`jesd_reset_seq` conduit) and the dc_fifo CDC, so
+pointing at `reset_sink` satisfies the validator without
+misrepresenting the runtime behaviour. Fix applied in commit `91d44ce`.
+
+**If you started Procedure 2.A against pre-`91d44ce` code and saw the
+warnings above**, you must refresh the IP catalog before the fix takes
+effect:
+
+- In Platform Designer: **File → Refresh System** (or **System → Refresh
+  System** depending on Quartus version), then re-instantiate
+  `dac_controller_0`.
+- If refresh doesn't pick up the change (catalog caches the parsed
+  `_hw.tcl` aggressively), close `qsys-edit` and re-open it. The IP
+  catalog is re-scanned on launch.
+- If you committed an instance into `baseline_top.qsys` before the
+  refresh, remove the `dac_controller_0_0` instance and re-add it so it
+  picks up the updated interface metadata.
+
+**Pass criterion:** with the fix in place, the System Messages pane is
+empty (no red errors, no yellow warnings related to `dac_controller_0`).
+
+If new warnings appear that are not the four above, capture screenshot
+and log to [potential_issues.md](potential_issues.md) before Stage 3.
 
 ### Procedure 2.B — Instantiate into a throwaway system (smoke test)
 
