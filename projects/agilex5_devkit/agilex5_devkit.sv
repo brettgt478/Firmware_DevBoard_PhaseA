@@ -85,7 +85,27 @@ module agilex5_devkit (
     input  wire         hps_osc_clk,
     //
     // External FPGA Reset
-    input  wire         fpga_reset_n
+    input  wire         fpga_reset_n,
+    //
+    // FMC SPI bus to AD9176-FMC-EBZ (HSIO 3B, 1.2-V LVCMOS, Stage 4)
+    output wire         fmc_spi_sck,
+    output wire         fmc_spi_mosi,
+    input  wire         fmc_spi_miso,
+    output wire         fmc_spi_cs1_n,
+    output wire         fmc_spi_cs2_n,
+    output wire         fmc_spi_en,
+    //
+    // FMC control GPIOs (HSIO 3B, 1.2-V LVCMOS, Stage 4)
+    output wire [1:0]   fmc_txen,
+    output wire         fmc_pe_ctrl,
+    //
+    // FMC housekeeping (3.3-V LVCMOS, Stage 4)
+    // - GA[1:0] are board pull-ups on this dev kit, not routed to the FPGA.
+    // - PG_M2C / PG_C2M are routed to the on-board MAX10 board-mgmt FPGA on
+    //   this dev kit, not to the main FPGA. The MAX10 likely handles the
+    //   power-good handshake autonomously; revisit in Stage 5 if firmware
+    //   ends up needing visibility into them.
+    input  wire         fmc_prsnt_n
 );
     // Constants
     localparam LED_PIO_WIDTH = 32;
@@ -151,6 +171,17 @@ module agilex5_devkit (
     logic h2f_warm_reset_handshake_reset_req;
 
     assign h2f_warm_reset_handshake_reset_ack = h2f_warm_reset_handshake_reset_req;
+
+    // FMC housekeeping pack into dac_status PIO (Stage 4).
+    //   [0]    = ~prsnt_n (active-high presence)
+    //   [1]    = reserved (PG_M2C is routed to board-mgmt MAX10, not main FPGA)
+    //   [2]    = pg_c2m_loopback (what u_pg_c2m_pio is driving; physical pin
+    //                              dangles -- routed to MAX10 board-mgmt FPGA)
+    //   [4:3]  = reserved (GA[1:0] not routed to FPGA on this dev kit)
+    //   [31:5] = '0       (reserved; JESD link status added in Stage 6)
+    wire fmc_pg_c2m_drive;          // PIO output bit (dangling externally)
+    wire [31:0] dac_status_word;
+    assign dac_status_word = {29'd0, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
 
     // Baseline-A55 system top module
     baseline_top u_baseline_top (
@@ -245,7 +276,22 @@ module agilex5_devkit (
         //
         // NiosV subsys PIO
         .niosv_pio_in_export                  ('0),
-        .niosv_pio_out_export                 ()
+        .niosv_pio_out_export                 (),
+        //
+        // dac_subsys conduits (Stage 4) -- FMC SPI + TXEN + PE_CTRL + SPI_EN + PG_C2M
+        .dac_spi_MOSI                         (fmc_spi_mosi),
+        .dac_spi_MISO                         (fmc_spi_miso),
+        .dac_spi_SCLK                         (fmc_spi_sck),
+        .dac_spi_SS_n                         ({fmc_spi_cs2_n, fmc_spi_cs1_n}),
+        .dac_tx_en_export                     (fmc_txen),
+        .dac_pe_ctrl_export                   (fmc_pe_ctrl),
+        .dac_spi_en_export                    (fmc_spi_en),
+        // dac_pg_c2m_export: still bound to the local fmc_pg_c2m_drive net so
+        // dac_status_word can read back what HPS wrote. The external FMC pin
+        // for PG_C2M (FMC D1) is owned by the board-mgmt MAX10, not the main
+        // FPGA, so this net never reaches a package pin.
+        .dac_pg_c2m_export                    (fmc_pg_c2m_drive),
+        .dac_status_export                    (dac_status_word)
     );
 
 endmodule

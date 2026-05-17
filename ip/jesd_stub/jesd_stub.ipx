@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+jesd_stub.ipx
+
+IP catalog index for the JESD-side stub component used by
+ip/dac_subsys/dac_subsys.qsys. Quartus's recursive IP_SEARCH_PATHS
+glob (../../ip/**/*) discovers _hw.tcl files at one nesting level
+deep but the project-local IP catalog cache requires an explicit
+.ipx entry for components nested two levels under the search root
+(here: ../../ip/dac_subsys/jesd_stub/). Without this file the
+component is found at top-level qsys-script time (Stage 3 worked)
+but not during per-instance sub-qsys-generate invocations
+(quartus_ipgenerate Stage 4 fails with
+"Component type jesd_stub is not in the library").
+
+Remove this file in Stage 6 alongside jesd_stub_hw.tcl when the
+JESD GTS Subsystem replaces the stub.
+-->
+<library>
+  <path path="jesd_stub_hw.tcl" />
+</library>

@@ -36,6 +36,10 @@ set_global_assignment -name DEVICE A5ED065BB32AE6SR0
 # Toplevel and toplevel RTL
 set_global_assignment -name TOP_LEVEL_ENTITY agilex5_devkit
 
+# Phase A custom RTL is VHDL-2008 (CLAUDE.md SS5). Project-wide default keeps
+# ipgenerate's wrapped VHDL files (dac_controller_0 inside dac_subsys) parseable.
+set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
+
 
 # Flow assignments
 # Put all reports into the output_files directory
@@ -131,6 +135,59 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to fpga_user_push_butt
 set_location_assignment PIN_BR22 -to fpga_user_push_buttons[3]
 set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to fpga_user_push_buttons[3] -entity agilex5_devkit
 # HPS IO48 Peripherals
+# HPS pin LOCATIONS recovered from upstream
+# D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf
+# (same DK-A5E065BB32AES1 dev kit family); were missing from the Stage 1 retargeted
+# baseline_a55 qsf, never noticed because Stages 1-3 only ran --project-only.
+# IO_STANDARD / drive strength / pull-up declarations follow below.
+set_location_assignment PIN_M124 -to hps_osc_clk
+set_location_assignment PIN_T127 -to hps_jtag_tck
+set_location_assignment PIN_Y132 -to hps_jtag_tms
+set_location_assignment PIN_T124 -to hps_jtag_tdo
+set_location_assignment PIN_P124 -to hps_jtag_tdi
+set_location_assignment PIN_D132 -to hps_sdmmc_CCLK
+set_location_assignment PIN_AB132 -to hps_sdmmc_CMD
+set_location_assignment PIN_E135 -to hps_sdmmc_D0
+set_location_assignment PIN_F132 -to hps_sdmmc_D1
+set_location_assignment PIN_AA135 -to hps_sdmmc_D2
+set_location_assignment PIN_V127 -to hps_sdmmc_D3
+set_location_assignment PIN_P132 -to hps_emac0_TX_CLK
+set_location_assignment PIN_J135 -to hps_emac0_RX_CLK
+set_location_assignment PIN_L135 -to hps_emac0_TX_CTL
+set_location_assignment PIN_AD135 -to hps_emac0_RX_CTL
+set_location_assignment PIN_M132 -to hps_emac0_TXD0
+set_location_assignment PIN_AD134 -to hps_emac0_TXD1
+set_location_assignment PIN_J134 -to hps_emac0_TXD2
+set_location_assignment PIN_AG120 -to hps_emac0_TXD3
+set_location_assignment PIN_K132 -to hps_emac0_RXD0
+set_location_assignment PIN_AG129 -to hps_emac0_RXD1
+set_location_assignment PIN_G134 -to hps_emac0_RXD2
+set_location_assignment PIN_G135 -to hps_emac0_RXD3
+set_location_assignment PIN_W135 -to hps_emac0_PPS
+set_location_assignment PIN_U135 -to hps_emac0_PPS_TRIG
+set_location_assignment PIN_N134 -to hps_emac0_MDIO
+set_location_assignment PIN_T132 -to hps_emac0_MDC
+set_location_assignment PIN_U134 -to hps_spim0_CLK
+set_location_assignment PIN_AL120 -to hps_spim0_MOSI
+set_location_assignment PIN_R134 -to hps_spim0_MISO
+set_location_assignment PIN_AG115 -to hps_spim0_SS0_N
+set_location_assignment PIN_W134 -to hps_uart0_TX
+set_location_assignment PIN_AK115 -to hps_uart0_RX
+set_location_assignment PIN_N135 -to hps_i3c1_SDA
+set_location_assignment PIN_AK120 -to hps_i3c1_SCL
+set_location_assignment PIN_AB124 -to hps_trace_CLK
+set_location_assignment PIN_F127 -to hps_trace_D0
+set_location_assignment PIN_Y124 -to hps_trace_D1
+set_location_assignment PIN_F124 -to hps_trace_D2
+set_location_assignment PIN_D124 -to hps_trace_D3
+set_location_assignment PIN_H127 -to hps_trace_D4
+set_location_assignment PIN_Y127 -to hps_trace_D5
+set_location_assignment PIN_K124 -to hps_trace_D6
+set_location_assignment PIN_AB127 -to hps_trace_D7
+set_location_assignment PIN_AG123 -to hps_gpio1_io3
+set_location_assignment PIN_B134 -to hps_gpio1_io4
+set_location_assignment PIN_M127 -to hps_gpio1_io12
+set_location_assignment PIN_K127 -to hps_gpio1_io13
 set_instance_assignment -name IO_STANDARD "1.8-V" -to hps_osc_clk
 set_instance_assignment -name IO_STANDARD "1.8-V" -to hps_jtag_tck
 set_instance_assignment -name IO_STANDARD "1.8-V" -to hps_jtag_tms
@@ -431,6 +488,12 @@ set_global_assignment -name IP_FILE ip/niosv_subsys/niosv_pio_out.ip
 set_global_assignment -name IP_FILE ip/niosv_subsys/niosv_reset.ip
 set_global_assignment -name QSYS_FILE niosv_subsys.qsys
 
+# Stage 3: DAC subsystem (Phase A IP + SPI master + PIOs + JESD stub).
+# dac_subsys.qsys is generated from ip/dac_subsys/dac_subsys.tcl by
+# build.tcl's regen step (mtime check); the .qsys is committed as the
+# build artifact, the .tcl is the editable source-of-truth.
+set_global_assignment -name QSYS_FILE ../../ip/dac_subsys/dac_subsys.qsys
+
 
 # Variant RTL source files
 set_global_assignment -name SYSTEMVERILOG_FILE agilex5_devkit.sv
@@ -446,6 +509,61 @@ set_global_assignment -name SDC_FILE jtag.sdc
 # Design Assistant files
 
 
+# -----------------------------------------------------------------------------
+# Stage 4: FMC AD9176-FMC-EBZ pin assignments
+#
+# CRITICAL (CLAUDE.md SS6 #3): VADJ on the dev kit MUST be 1.2 V before any
+# bitstream drives the HSIO 3B LA bus. Pin locations are the FPGA BGA package
+# pins as routed by the DK-A5E065BB32AES1 schematic (see AD9176_Dev_Pinout.txt
+# 'FPGA FMC Pin Name' / FPGA-package column). The FMC-connector-side pin
+# numbers in Agilex_FMC_Pinout.txt (G9, H11 etc.) are VITA 57.1 mezzanine
+# coordinates, not FPGA package pins -- those would fail "illegal location
+# assignment" at fitter time.
+#
+# fmc_ga[1:0] (FMC C34/D35) are board pull-ups, not routed to the FPGA on
+# this dev kit; intentionally absent from agilex5_devkit.sv and from this qsf.
+# -----------------------------------------------------------------------------
+
+# FMC SPI bus to AD9176 (HSIO 3B 1.2-V, 8 mA drive)
+set_location_assignment PIN_A54 -to fmc_spi_sck
+set_location_assignment PIN_B54 -to fmc_spi_mosi
+set_location_assignment PIN_A63 -to fmc_spi_miso
+set_location_assignment PIN_B60 -to fmc_spi_cs1_n
+set_location_assignment PIN_B56 -to fmc_spi_cs2_n
+set_location_assignment PIN_A60 -to fmc_spi_en
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_sck
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_mosi
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_miso
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_cs1_n
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_cs2_n
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_spi_en
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_sck
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_mosi
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_cs1_n
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_cs2_n
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_en
+
+# FMC control GPIOs (HSIO 3B 1.2-V, 8 mA drive)
+set_location_assignment PIN_M58 -to fmc_txen[0]
+set_location_assignment PIN_K58 -to fmc_txen[1]
+set_location_assignment PIN_F47 -to fmc_pe_ctrl
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_txen[0]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_txen[1]
+set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_pe_ctrl
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_txen[0]
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_txen[1]
+set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_pe_ctrl
+
+# FMC housekeeping (3.3-V LVCMOS)
+# PG_M2C and PG_C2M are routed to the board-mgmt MAX10 FPGA on this dev kit,
+# not to the main FPGA, so they are intentionally absent here. The u_pg_c2m_pio
+# instance inside dac_subsys is preserved so the HPS can still write to it
+# (output dangles inside baseline_top) in case Stage 5 finds firmware needs
+# runtime control; the MAX10 likely handles the handshake autonomously.
+set_location_assignment PIN_K8 -to fmc_prsnt_n
+set_instance_assignment -name IO_STANDARD "3.3-V LVCMOS" -to fmc_prsnt_n
+
+
 # Design partitions assignments
 #set_instance_assignment -name PARTITION fabric_subsys -to u_baseline_top|u_fabric_subsys -entity agilex5_devkit
 #set_instance_assignment -name PLACE_REGION "X1 Y7 X184 Y140" -to u_baseline_top|u_fabric_subsys
@@ -459,3 +577,16 @@ set_global_assignment -name SDC_FILE jtag.sdc
 #set_instance_assignment -name PARTITION_COLOUR 4283486463 -to agilex5_devkit -entity agilex5_devkit
 #set_instance_assignment -name PARTITION_COLOUR 4286438143 -to auto_fab_0 -entity agilex5_devkit
 #set_instance_assignment -name PARTITION_COLOUR 4294956150 -to u_baseline_top|u_fabric_subsys|auto_fab_1 -entity agilex5_devkit
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_clk_bridge_axi.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_clk_bridge_jesd.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_axi.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_jesd.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_csr_bridge.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_dac_controller_0.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_spi_master.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_tx_en_pio.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_pe_ctrl_pio.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_dac_status_pio.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_spi_en_pio.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_pg_c2m_pio.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_jesd_stub.ip

@@ -1,39 +1,39 @@
-Signal          | P1
+AD9176 Signal  | P1    |  FPGA FMC Pin Name | FPGA Schematic Signal  | FMC Pin
 ----------------+-----
-SERDIN6_P       | A22
-SERDIN6_N       | A23
-SERDIN5_P       | A26
-SERDIN5_N       | A27
-SERDIN4_P       | A30
-SERDIN4_N       | A31
-SERDIN3_P       | B32
-SERDIN3_N       | B33
-SERDIN2_P       | A34
-SERDIN2_N       | A35
-SERDIN1_P       | B36
-SERDIN1_N       | B37
-SERDIN0_P       | A38
-SERDIN0_N       | A39
-SERDIN7_P       | C2
-SERDIN7_N       | C3
-FMC_TXEN_0      | C10
-FMC_TXEN_1      | C11
-FMC_SCL         | C30
-FMC_SDA         | C31
-GA0             | C34
-BR40_P          | D4
-BR40_N          | D5
-SYNC0_P         | D8
-SYNC0_N         | D9
-FMC_CS2         | D11
-FMC_SPI_EN      | D12
-GA1             | D35
-SYSREF2_P       | G6
-SYSREF2_N       | G7
-FMC_SCK         | G9
-FMC_MOSI        | G10
-SYNC1_P         | H7
-SYNC1_N         | H8
-FMC_MISO        | H10
-FMC_CS1         | H11
-FMC_PE_CTRL     | H13
+SERDIN6_P       | A22   |  DP1_C2M_P   |  FMC_TX1_P          | AR7
+SERDIN6_N       | A23   |  DP1_C2M_N   |  FMC_TX1_N          | AR10
+SERDIN5_P       | A26   |  DP2_C2M_P   |  FMC_TX2_P          | AN7
+SERDIN5_N       | A27   |  DP2_C2M_N   |  FMC_TX2_N          | AN10
+SERDIN4_P       | A30   |  DP3_C2M_P   |  FMC_TX3_P          | AL7
+SERDIN4_N       | A31   |  DP3_C2M_N   |  FMC_TX3_N          | AL10
+SERDIN3_P       | B32   |  DP7_C2M_P   |  FMC_TX7_P             | AW7
+SERDIN3_N       | B33   |  DP7_C2M_N   |  FMC_TX7_N             | AW10
+SERDIN2_P       | A34   |  DP4_C2M_P  |  FMC_TX4_P               | BE7
+SERDIN2_N       | A35   |  DP4_C2M_N   |  FMC_TX4_N              | BE10
+SERDIN1_P       | B36   |  DP6_C2M_P  |  FMC_TX6_P               | BA7
+SERDIN1_N       | B37   |  DP6_C2M_N  |  FMC_TX6_N               | BA10
+SERDIN0_P       | A38   |  DP5_C2M_P   |  FMC_TX5_P              | BC7
+SERDIN0_N       | A39   |  DP5_C2M_N   |  FMC_TXN_N             | BC10
+SERDIN7_P       | C2     |  DP0_C2M_P  |  FMC_TX0_P              | AU7
+SERDIN7_N       | C3     |  DP0_C2M_N  |  FMC_TX0_N              | AU10
+FMC_TXEN_0   | C10   |  LA06_P           |  FMC_1V2_LA_P10  | M58
+FMC_TXEN_1   | C11   |  LA06_N           |  FMC_1V2_LA_N10  | K58
+FMC_SCL          | C30   |  SCL                   |  FMC_SCL                  | F18
+FMC_SDA         | C31    |  SDA                  |  FMC_SDA                  | F15 
+GA0                    | C34    |  GA0
+BR40_P             | D4      |  GBTCLK0_M2C_P   |  FMC_GBTCLK0_M2C_P   | AP16
+BR40_N             | D5      |  GBTCLK0_M2C_N   |  FMC_GBTCLK0_M2C_N   | AP21
+SYNC0_P          | D8      |  LA01_P_CC      |  FMC_1V2_LA_P1 | B45
+SYNC0_N          | D9      |  LA01_N_CC      |  FMC_1V2_LA_N1  | A48
+FMC_CS2         | D11    |  LA05_P              |  FMC_1V2_LA_P5  | B56
+FMC_SPI_EN   | D12    |  LA05_N              |  FMC_1V2_LA_N5  | A60
+GA1                    | D35   |   GA1
+SYSREF2_P     | G6     |   LA00_P_CC     |  FMC_1V2_LA_P0   |  A45
+SYSREF2_N     | G7     |   LA00_N_CC     |  FMC_1V2_LA_N0   | B42
+FMC_SCK         | G9     |  LA03_P             |  FMC_1V2_LA_P3    | A54
+FMC_MOSI        | G10  |   LA03_N             |  FMC_1V2_LA_N3   | B54
+SYNC1_P          | H7      |  LA02_P             |  FMC_1V2_LA_P2   | B51
+SYNC1_N          | H8      |  LA02_N            |  FMC_1V2_LA_N2    | A51
+FMC_MISO       | H10    |  LA04_P            |  FMC_1V2_LA_P4    | A63
+FMC_CS1          | H11   |  LA04_N            |  FMC_1V2_LA_N4    | B60
+FMC_PE_CTRL| H13   |  LA07_P           |  FMC_1V2_LA_P7     | F47

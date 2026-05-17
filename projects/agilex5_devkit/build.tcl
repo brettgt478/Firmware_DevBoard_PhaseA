@@ -31,10 +31,111 @@ set clean_dirs [list \
     ../../ip/dac_subsys/dac_subsys \
     ../../ip/dac_controller_0/dac_controller_0 \
 ]
+# NOTE on ip/dac_subsys/ip/ : NOT cleaned between builds.
+# That tree holds per-instance .ip backing files written by qsys-script's
+# save_system (with --quartus-project=agilex5_devkit.qpf). They are source
+# artifacts on par with fabric_subsys's projects/agilex5_devkit/ip/fabric_subsys/*.ip.
+# The regen step below rewrites them when dac_subsys.tcl is newer than the .qsys
+# OR when the backing dir is missing. Cleaning them here without forcing regen
+# would leave the .qsys referencing files that no longer exist (13 "undefined
+# entity" synthesis errors).
 foreach d $clean_dirs {
     if {[file exists $d]} {
         puts "build.tcl: cleaning $d"
         file delete -force $d
+    }
+}
+
+# --- Regenerate dac_subsys.qsys from dac_subsys.tcl when stale ------------
+# qsys-script wins source-of-truth status; the committed .qsys is the
+# build-time artifact, regenerated whenever its .tcl source is newer (or
+# the .qsys is missing). Regen happens BEFORE quartus_ipgenerate because
+# ipgenerate parses the .qsys file referenced by the qsf.
+set env(REPO_ROOT) [pwd]/../..
+
+set dac_subsys_tcl  ../../ip/dac_subsys/dac_subsys.tcl
+set dac_subsys_qsys ../../ip/dac_subsys/dac_subsys.qsys
+set dac_subsys_ipdir ../../ip/dac_subsys/ip/dac_subsys
+set regen 0
+if {![file exists $dac_subsys_qsys]} {
+    set regen 1
+    puts "build.tcl: dac_subsys.qsys missing  regenerating"
+} elseif {![file isdirectory $dac_subsys_ipdir]} {
+    set regen 1
+    puts "build.tcl: per-instance .ip backing dir $dac_subsys_ipdir missing  regenerating"
+} elseif {[file mtime $dac_subsys_tcl] > [file mtime $dac_subsys_qsys]} {
+    set regen 1
+    puts "build.tcl: dac_subsys.tcl newer than dac_subsys.qsys  regenerating"
+}
+if {$regen} {
+    # --quartus-project=agilex5_devkit.qpf is REQUIRED (not --new-quartus-project).
+    # qsys-script's save_system needs the project's IP catalog to write the
+    # per-instance backing .ip files at ip/dac_subsys/ip/dac_subsys/dac_subsys_u_*.ip
+    # (logicalView path embedded in the .qsys's Generic Component definitions).
+    # Without those .ip files synthesis fails with 13 "instantiates undefined
+    # entity" errors. --search-path additionally ensures jesd_stub and
+    # dac_controller_0 are discoverable even if Quartus's IP catalog cache
+    # hasn't picked them up yet (build.tcl already cleans qdb/dni so the
+    # catalog is rescanned each run).
+    set qsys_search [list \
+        "../../ip/dac_controller_0/**/*" \
+        "../../ip/jesd_stub/**/*" \
+        "\$"]
+    set qsys_search_arg [join $qsys_search ","]
+    puts "build.tcl: regenerating dac_subsys.qsys via qsys-script"
+    if {[catch {exec >@stdout 2>@stderr qsys-script \
+                    --quartus-project=agilex5_devkit.qpf \
+                    --search-path=$qsys_search_arg \
+                    --script=$dac_subsys_tcl} result]} {
+        puts stderr "build.tcl: qsys-script regen FAILED:"
+        puts stderr $result
+        exit 1
+    }
+}
+
+# --- Regenerate baseline_top.qsys = upstream + Phase B patches ------------
+# baseline_top.upstream.qsys is the frozen GHRD baseline snapshot (never
+# edited). baseline_top_phaseb_patches.tcl is the Phase B mutation source;
+# it copies upstream into the working .qsys then applies Stage 4+ edits via
+# load_system / add_instance / add_connection / EXPORT_OF.
+# Regen rule: working .qsys missing OR (upstream OR patch script) newer.
+set bt_upstream ./baseline_top.upstream.qsys
+set bt_patches  ./baseline_top_phaseb_patches.tcl
+set bt_working  ./baseline_top.qsys
+set bt_regen 0
+if {![file exists $bt_working]} {
+    set bt_regen 1
+    puts "build.tcl: baseline_top.qsys missing  regenerating"
+} elseif {[file mtime $bt_patches] > [file mtime $bt_working]} {
+    set bt_regen 1
+    puts "build.tcl: baseline_top_phaseb_patches.tcl newer than baseline_top.qsys  regenerating"
+} elseif {[file mtime $bt_upstream] > [file mtime $bt_working]} {
+    set bt_regen 1
+    puts "build.tcl: baseline_top.upstream.qsys newer than baseline_top.qsys  regenerating"
+}
+if {$bt_regen} {
+    # --quartus-project=agilex5_devkit.qpf (see dac_subsys regen rationale above).
+    # baseline_top.qsys instantiates u_dac_subsys; its .ip backing files at
+    # ip/dac_subsys/ip/dac_subsys/ must exist BEFORE this step runs (the
+    # dac_subsys regen above takes care of that). --search-path lets
+    # qsys-script find dac_subsys.qsys and the new jesd_stub component.
+    set bt_search [list \
+        "../../ip/dac_controller_0/**/*" \
+        "../../ip/jesd_stub/**/*" \
+        "../../ip/dac_subsys/**/*" \
+        "custom_ip/**/*" \
+        "ip/fabric_subsys/**/*" \
+        "ip/shell_subsys/**/*" \
+        "\$"]
+    set bt_search_arg [join $bt_search ","]
+    puts "build.tcl: regenerating baseline_top.qsys via qsys-script patch"
+    if {[catch {exec >@stdout 2>@stderr qsys-script \
+                    --quartus-project=agilex5_devkit.qpf \
+                    --search-path=$bt_search_arg \
+                    --script=$bt_patches} result]} {
+        puts stderr "build.tcl: baseline_top patch regen FAILED:"
+        puts stderr $result
+        exit 1
     }
 }
 

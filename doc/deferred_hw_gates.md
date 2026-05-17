@@ -45,18 +45,72 @@ Each entry:
 
 ---
 
+## Stage 3 - Build dac_subsys.qsys (control plane only, JESD stubbed)
+
+### Stage 3 verify: optional Platform Designer GUI inspection of dac_subsys
+
+- **What was deferred**: a belt-and-suspenders GUI walk-through of the
+  generated `ip/dac_subsys/dac_subsys.qsys` to visually confirm instance
+  layout, address-map carving, and System Messages cleanliness. The PLAN
+  verify gate is fully software-checkable
+  (`quartus_sh -t build.tcl --project-only` clean, address map  16 KB,
+  AXI ID-width adapter auto-inserted); the GUI run is **not required**.
+- **Why deferred**: GUI sessions need a human in front of qsys-edit. The
+  headless ipgenerate already gates correctness; this is documentation
+  insurance, not a blocker.
+- **Software substitute**: `quartus_sh -t build.tcl --project-only`
+  ipgenerate is clean (0 errors, 148 warnings  consistent with the
+  Stage 1/2 baseline). Address-map readback from
+  [ip/dac_subsys/dac_subsys.qsys](../ip/dac_subsys/dac_subsys.qsys) (search
+  for `baseAddress`) and the `dac_subsys.csv` instance map confirm the
+  five slave assignments (0x0000, 0x1000, 0x1100, 0x1110, 0x1120) and the
+  auto-inserted Avalon-to-AXI translator at the dac_controller_0 boundary.
+  See [doc/integration.md Procedure 3.A](integration.md#procedure-3a--platform-designer-gui-inspection-of-dac_subsys).
+- **Unblock when**: a human runs Procedure 3.A and confirms the System
+  Messages pane is empty. No hardware required.
+
+---
+
 ## Stage 4 - Wire dac_subsys into baseline_top; FMC SPI pinout
 
 ### Stage 4 verify 2-5: SOF program + Linux `devmem` + AD9176 SPI silicon-ID readback
 
 - **What was deferred**: program SOF, boot Yocto, run `devmem 0x02000000`,
   `devmem 0x02001000` writes, scope FMC SPI lines, AD9176 silicon-ID read.
-- **Why deferred**: hardware not connected.
-- **Software substitute**: Quartus elaborate + fit passes. SPI Master IP
-  CSR map matches Avalon SPI Master User Guide. PIO + SPI Master CSR
-  values exercised in `dac_subsys_tb.sv` (Stage 8).
-- **Unblock when**: dev kit + AD9176-FMC-EBZ connected, VADJ at 1.2 V,
-  AD9176 datasheet silicon-ID register address confirmed.
+- **Why deferred**: hardware not connected (per Stage 0 decision).
+- **Software substitute**: Quartus elaborate + fit pass clean
+  (`quartus_sh -t build.tcl` produces `output_files/agilex5_devkit.sof`
+  with WNS > 0.5 ns, no unbonded-pin warnings on any `fmc_*` port).
+  Stage 3 ipgenerate proved the LWH2F → `axi_csr` path elaborates with
+  the auto-inserted AXI4-to-Avalon-MM adapter; Stage 4 adds only pinout
+  and wiring. SPI Master IP CSR map matches Avalon SPI Master User Guide;
+  PIO + SPI Master CSR values will be exercised in `dac_subsys_tb.sv`
+  (Stage 8) before hardware is required.
+- **Procedure when hardware available**: see
+  [integration.md Procedure 4.A](integration.md#procedure-4a--fmc-spi-bring-up--ad9176-silicon-id-readback)
+  for full SOF program + devmem + scope + AD9176 silicon-ID readback
+  sequence, and Procedure 4.B for the TXEN/PE_CTRL toggle smoke test.
+- **Unblock when**: dev kit + AD9176-FMC-EBZ connected, VADJ at 1.2 V
+  (multimeter-verified), AD9176 datasheet silicon-ID register address
+  confirmed.
+
+### Stage 4 - NiosV JTAG-master access to dac_subsys.axi_csr (architectural deferral)
+
+- **What was deferred**: extension of `u_jtag_avalon_master` in
+  `niosv_subsys.qsys` to reach `u_dac_subsys.axi_csr`, enabling System
+  Console CSR access without booting Linux.
+- **Why deferred**: per Stage 4 design decision — Stage 4 Linux `devmem`
+  via LWH2F is the primary verify path; the JTAG-master alternate path
+  is only needed for Stage 6 GTS bring-up debug. Adding it in Stage 4
+  would have required editing `niosv_subsys.qsys` (currently baseline-
+  derived) without a downstream consumer.
+- **Software substitute**: none required at Stage 4 (the LWH2F path is
+  the architectural primary).
+- **Unblock when**: Stage 6 brings up the JESD GTS Subsystem. Add a new
+  exported master interface to `niosv_subsys.qsys` that taps off
+  `u_jtag_avalon_master.master`, then wire it in `baseline_top.qsys` to
+  `u_dac_subsys.axi_csr` @ `0x02000000` (multi-master arbitration with
+  the existing LWH2F path auto-inserted by Qsys).
 
 ---
 

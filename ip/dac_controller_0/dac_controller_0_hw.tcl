@@ -83,6 +83,14 @@ set_parameter_property G_LUT_DEPTH ALLOWED_RANGES      "16:65536"
 # parameter values if needed in future revisions.
 proc elaborate {} {}
 
+# Fileset-callback no-op. qsys invokes the proc named in the 3rd arg of
+# add_fileset during SPD generation; the actual add_fileset_file calls above
+# already populated the filesets at top-level, so this proc has nothing to
+# do beyond existing. Missing this proc only manifests during full ipgenerate
+# (not during module-scan / elaborate), which is why Stage 2 and Stage 3
+# --project-only didn't catch it.
+proc set_top_level {top} {}
+
 # =============================================================================
 # Clock interfaces
 # =============================================================================

@@ -232,6 +232,18 @@ Delete `ip/dac_subsys/`. `agilex5_devkit.qsf` does not yet reference it.
 - LWH2F master ID width unknown until Qsys reports it; if Qsys cannot adapt automatically, insert an explicit `axi_id_width_adapter` between LWH2F and `u_dac_subsys.axi_csr`.
 - SPI master IP requires an external SCK frequency — generate from the 100 MHz `clock_sink_clk` via the IP's internal divider, not from a new PLL.
 
+### Stage 3 status (2026-05-16)
+
+**Complete.** [ip/dac_subsys/dac_subsys.qsys](ip/dac_subsys/dac_subsys.qsys) generated from [ip/dac_subsys/dac_subsys.tcl](ip/dac_subsys/dac_subsys.tcl) (qsys-script source-of-truth; build.tcl regen step rebuilds whenever the .tcl is newer than the .qsys). Eleven instances: `u_dac_controller_0` (Stage 2 IP), `u_spi_master` (altera_avalon_spi, 2 CS, 25 MHz, 24-bit, mode 0), `u_tx_en_pio`/`u_pe_ctrl_pio`/`u_dac_status_pio` (altera_avalon_pio: 2-bit out, 1-bit out, 32-bit in with edge-capture), `u_csr_bridge` (altera_avalon_mm_bridge, 14-bit byte addr, 32-bit data), two `altera_clock_bridge` + two `altera_reset_bridge` instances, and `u_jesd_stub` (new Phase B placeholder at [ip/dac_subsys/jesd_stub/](ip/dac_subsys/jesd_stub/) terminating the JESD-side AVST sources + 7 conduits of u_dac_controller_0). Address map carved at 0x0000 / 0x1000 / 0x1100 / 0x1110 / 0x1120 within the 16 KB span; 0x2000-0x3FFF reserved for the JESD GTS Subsystem in Stage 6.
+
+**Risk closure (vs. Stage 3 risk list above):**
+- LWH2F ID-width adapter: Qsys auto-inserted an Avalon-MM-to-AXI4 translator (`u_dac_controller_0_lwhpm2fpga_translator` + `u_dac_controller_0_lwhpm2fpga_agent` in `dac_subsys.csv`); no manual `axi_id_width_adapter` instantiation needed.
+- SPI SCK frequency: `targetClockRate=25000000` divides `clock_sink_clk` (100 MHz) by 4 inside the IP. No new PLL.
+
+Verified by `quartus_sh -t build.tcl --project-only` (0 errors, 148 warnings — identical to the Stage 1/2 baseline; the +2 vs Stage 2 are the auto-inserted MM-to-AXI translator generation messages, all benign). Phase A block testbenches still 8/8 SIMULATION PASSED (vendoring sanity check). Optional GUI inspection deferred to Procedure 3.A — see [doc/integration.md](doc/integration.md#procedure-3a--platform-designer-gui-inspection-of-dac_subsys).
+
+**One implementation note for Stage 6.** The stub drives `u_dac_controller_0.tx_enbl` to `'0'` (matches the dac_controller_0 architecture's "declared but unused" treatment), and the `jesd_csr_readback` fields to JESD-spec-encoded mode-4 nominals (L=4 → field=3, K=32 → field=31, etc.). When Stage 6 replaces the stub with the real GTS Subsystem, confirm the GTS IP's readback ports use the same encoding before software bring-up scripts depend on the readback values.
+
 ---
 
 ## Stage 4 — Wire `dac_subsys` into `baseline_top.qsys`; FMC SPI pin-out
@@ -343,6 +355,162 @@ Comment out the `set_global_assignment -name QSYS_FILE ../../ip/dac_subsys/dac_s
 
 - LA pin location typos cause permanent FMC damage — **double-check every pin against [Agilex_FMC_Pinout.txt](Agilex_FMC_Pinout.txt) and [AD9176_Dev_Pinout.txt](AD9176_Dev_Pinout.txt) before applying VADJ**.
 - HSIO 3B drive strength default may be too high for 1.2-V LVCMOS — limit to 8 mA in qsf.
+
+### Stage 4 status
+
+**Complete (2026-05-17).** `output_files/agilex5_devkit.sof` produced
+cleanly: 0 errors, WNS +1.731 ns (target ≥ 0.5 ns per CLAUDE.md §6 #2),
+168/624 pins (27%), 11,020/222,400 ALMs (5%). Build flow:
+`quartus_sh -t build.tcl` runs (1) qsys-script regen of dac_subsys.qsys
+and baseline_top.qsys, (2) quartus_ipgenerate, (3) full compile, (4)
+assembler.
+
+#### Source-of-truth additions
+
+[projects/agilex5_devkit/baseline_top.qsys](projects/agilex5_devkit/baseline_top.qsys)
+is regenerated from frozen
+[baseline_top.upstream.qsys](projects/agilex5_devkit/baseline_top.upstream.qsys)
++ [baseline_top_phaseb_patches.tcl](projects/agilex5_devkit/baseline_top_phaseb_patches.tcl)
+on every build (mirrors the dac_subsys.qsys pattern; build.tcl mtime-checks
+both inputs against the working .qsys). Two new 1-bit output PIOs added to
+[ip/dac_subsys/dac_subsys.tcl](ip/dac_subsys/dac_subsys.tcl):
+`u_spi_en_pio` @ CSR offset `0x1130` (FMC level-shifter enable) and
+`u_pg_c2m_pio` @ `0x1140` (power-good back to mezzanine). Both reset to 0.
+
+#### Wiring (baseline_top.qsys)
+
+- `u_shell_subsys.lwhps2fpga` (master, AXI4) → `u_dac_subsys.axi_csr`
+  (slave, Avalon-MM) @ `baseAddress=0x02000000` (16 KB span). Parallel to
+  the existing `u_fabric_subsys.lwhps2fpga_bridge` at `0x0-0x00FFFFFF` (no
+  `fabric_subsys.qsys` edits — preserves CLAUDE.md §4 baseline-unchanged
+  rule). Qsys auto-inserts an AXI4-to-Avalon-MM translator at the
+  dac_subsys boundary.
+- `u_shell_subsys.system_clock` (100 MHz) → both
+  `u_dac_subsys.clock_sink_clk` AND `u_dac_subsys.jesd_tx_link_clk` (Stage 4
+  placeholder — the jesd_stub is synthesis-only; Stage 6 rewires
+  `jesd_tx_link_clk` to the ~250 MHz GTS link clock).
+- `u_shell_subsys.system_reset_n` → `u_dac_subsys.axi_reset` AND
+  `u_dac_subsys.jesd_reset` (Stage 4 placeholder; Stage 6 reroutes
+  `jesd_reset` to the GTS reset sequencer output).
+
+#### Exported boundary conduits (baseline_top → agilex5_devkit.sv)
+
+| Conduit                           | Owner inside dac_subsys                  |
+|-----------------------------------|------------------------------------------|
+| `dac_spi_{MISO,MOSI,SCLK,SS_n[1:0]}` | `u_spi_master` external               |
+| `dac_tx_en_export[1:0]`           | `u_tx_en_pio`                            |
+| `dac_pe_ctrl_export`              | `u_pe_ctrl_pio`                          |
+| `dac_spi_en_export`               | `u_spi_en_pio` *(Stage 4)*               |
+| `dac_pg_c2m_export`               | `u_pg_c2m_pio` *(Stage 4, dangles)*      |
+| `dac_status_export[31:0]`         | `u_dac_status_pio` (input PIO)           |
+
+#### Top-level FMC ports (agilex5_devkit.sv) — 10 pins
+
+| Pin                  | FPGA pkg | IO standard / drive |
+|----------------------|----------|---------------------|
+| `fmc_spi_sck`        | PIN_A54  | 1.2-V, 8 mA         |
+| `fmc_spi_mosi`       | PIN_B54  | 1.2-V, 8 mA         |
+| `fmc_spi_miso`       | PIN_A63  | 1.2-V               |
+| `fmc_spi_cs1_n`      | PIN_B60  | 1.2-V, 8 mA         |
+| `fmc_spi_cs2_n`      | PIN_B56  | 1.2-V, 8 mA         |
+| `fmc_spi_en`         | PIN_A60  | 1.2-V, 8 mA         |
+| `fmc_txen[0]`        | PIN_M58  | 1.2-V, 8 mA         |
+| `fmc_txen[1]`        | PIN_K58  | 1.2-V, 8 mA         |
+| `fmc_pe_ctrl`        | PIN_F47  | 1.2-V, 8 mA         |
+| `fmc_prsnt_n`        | PIN_K8   | 3.3-V LVCMOS        |
+
+Pin locations are the **FPGA BGA package pins** as routed by the
+DK-A5E065BB32AES1 schematic (AD9176_Dev_Pinout.txt "FPGA package pin"
+column). The FMC-connector-side "Pin Number" column in
+Agilex_FMC_Pinout.txt (G9, H11, D11 etc.) is the VITA 57.1 mezzanine
+connector grid, **not** the FPGA package pin — early Stage 4 attempts used
+the wrong column and the fitter rejected every pin as "illegal location
+assignment". See [ISSUE-012](doc/potential_issues.md#issue-012-ad9176-fmc-ebz-board-mgmt-signals-routed-to-max10-not-main-fpga)
+and the saved project memory `project_fmc_max10_handoff.md` for the
+pinout-interpretation gotcha and the MAX10 hand-off.
+
+`dac_status_word` packs `{29'd0, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n}`
+into the 32-bit `dac_status_pio` input. Bits [1] (PG_M2C) and [4:3] (GA)
+are reserved at 0 because those FMC signals are owned by the on-board
+MAX10 / board pull-ups, not the main FPGA. The `u_pg_c2m_pio` instance
+inside dac_subsys is preserved so HPS can write `dac_status_word[2]` as a
+write/read-loopback diagnostic, but its external conduit dangles inside
+baseline_top.
+
+#### Address map (16 KB at 0x0200_0000, HPS view)
+
+| Offset  | Span | Slave |
+|---------|------|-------|
+| 0x0000  | 1 KB | `u_dac_controller_0.lwhpm2fpga` (Phase A reg_bank) |
+| 0x1000  | 64 B | `u_spi_master.spi_control_port` |
+| 0x1100  | 16 B | `u_tx_en_pio.s1` |
+| 0x1110  | 16 B | `u_pe_ctrl_pio.s1` |
+| 0x1120  | 16 B | `u_dac_status_pio.s1` |
+| 0x1130  | 16 B | `u_spi_en_pio.s1` *(Stage 4)* |
+| 0x1140  | 16 B | `u_pg_c2m_pio.s1` *(Stage 4, write-only at the pad)* |
+| 0x2000  | 8 KB | reserved (Stage 6: JESD GTS Subsystem) |
+
+#### Build-flow scaffolding discovered/added during Stage 4
+
+These were not in the original Stage 4 plan but were needed to make the
+first full compile succeed. Each is also captured in
+[doc/potential_issues.md](doc/potential_issues.md) as ISSUE-012 / ISSUE-013
+or in the build.tcl / hw.tcl comments.
+
+1. **`set_top_level` fileset callback** — `dac_controller_0_hw.tcl` and the
+   new `jesd_stub_hw.tcl` both list `set_top_level` as their
+   `add_fileset ... QUARTUS_SYNTH` callback but never defined it. Stage 2
+   verify and Stage 3 `--project-only` never invoked the callback; Stage 4
+   full ipgenerate did and failed with `invalid command name "set_top_level"`.
+   Fix: added `proc set_top_level {top} {}` no-op to both hw.tcl files.
+
+2. **jesd_stub IP catalog discoverability** — moved from
+   `ip/dac_subsys/jesd_stub/` to `ip/jesd_stub/` (same nesting depth as
+   `ip/dac_controller_0/`) so Quartus's recursive `IP_SEARCH_PATHS` glob
+   resolves it during sub-qsys-generate invocations. Added a
+   `jesd_stub.ipx` index alongside `jesd_stub_hw.tcl` for explicit
+   registration.
+
+3. **qsys-script: `--quartus-project=agilex5_devkit.qpf` (not
+   `--new-quartus-project=throwaway`)** — only the former triggers
+   `save_system` to emit per-instance backing `.ip` files at
+   `ip/dac_subsys/ip/dac_subsys/dac_subsys_u_*.ip`. Those files are now
+   committed source artifacts (no longer in .gitignore) and synthesis
+   requires them. `build.tcl` regen step rewrites them whenever the .tcl
+   source is newer than the .qsys OR the backing-ip dir is missing.
+
+4. **`VHDL_INPUT_VERSION VHDL_2008` project-wide** — Phase A custom RTL
+   uses VHDL-2008 (per CLAUDE.md §5); Quartus's default VHDL-1993 parser
+   rejected unconstrained ports / 2008 constructs in `dc_fifo.vhd`,
+   `reg_bank.vhd`, `sine_wave_gen.vhd`, `jesd_sync_controller.vhd`, etc.
+
+5. **IO standard naming** — Agilex 5 expects `"1.2-V"` (not
+   `"1.2-V LVCMOS"`). The `LVCMOS` suffix is implicit for single-ended
+   signaling at that voltage.
+
+6. **48 HPS IO48 pin locations** recovered from
+   `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
+   (Stage 1 retargeting dropped these; see
+   [ISSUE-013](doc/potential_issues.md#issue-013-stage-1-baseline-retargeting-dropped-48-hps-io48-pin-locations)).
+   `hps_jtag_*`, `hps_sdmmc_*`, `hps_emac0_*`, `hps_spim0_*`, `hps_uart0_*`,
+   `hps_i3c1_*`, `hps_trace_*`, `hps_gpio1_*`, `hps_osc_clk`.
+
+#### Stage 4 deferred items (queued for later stages)
+
+- NiosV JTAG-to-Avalon-master path to `u_dac_subsys.axi_csr` (per Stage 4
+  architectural decision — LWH2F `devmem` is the primary verify path; the
+  JTAG-master alternate is only needed for Stage 6 GTS bring-up debug).
+- `src/fmc_handshake.sv` (per [CLAUDE.md §6 #4](CLAUDE.md#6-critical-constraints)).
+  Stage 4 exposes `~fmc_prsnt_n` through `dac_status_pio[0]` for software
+  read-back; the hardware-gate version that drives the GTS reset is added
+  in Stage 6.
+
+#### Hardware bring-up procedures
+
+See [doc/integration.md Procedure 4.A](doc/integration.md#procedure-4a--fmc-spi-bring-up--ad9176-silicon-id-readback)
+(SOF + Linux devmem + scope + AD9176 silicon-ID read) and
+[Procedure 4.B](doc/integration.md#procedure-4b--txen--pe_ctrl-toggle-smoke-test)
+(TXEN/PE_CTRL toggle smoke test).
 
 ---
 

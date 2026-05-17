@@ -267,3 +267,86 @@ The DBI port removal cascaded into edits to:
       reconsider re-promoting to DDR4-3200 and re-enabling DBI.
 - [ ] If production silicon ever lands on the dev kit, restore the original
       `emif_io96b_hps.ip` and DBI plumbing.
+
+---
+
+## ISSUE-012: AD9176-FMC-EBZ board-mgmt signals routed to MAX10, not main FPGA
+
+**Date:** 2026-05-17
+**Module:** `projects/agilex5_devkit/agilex5_devkit.sv`, `agilex5_devkit.qsf`,
+`ip/dac_subsys/dac_subsys.tcl` (u_pg_c2m_pio instance)
+**Status:** Closed (Stage 4) — documented in
+[memory/project_fmc_max10_handoff.md](../../.claude/projects/d--Firmware-DevBoard-PhaseA/memory/project_fmc_max10_handoff.md)
+
+**Description:**
+On the DK-A5E065BB32AES1 dev kit, several FMC management signals defined by
+VITA 57.1 are routed to an on-board MAX10 board-management FPGA, **not** to
+the main Agilex 5 FPGA. Initial CLAUDE.md §2 architecture (Stage 4 plan)
+incorrectly assumed the main FPGA owned these. Confirmed routing:
+
+| Signal      | Main FPGA pin   | Owned by              |
+|-------------|-----------------|-----------------------|
+| `PRSNT_M2C_L` | PIN_K8        | **main FPGA** (input) |
+| `PG_M2C`      | n/a           | board-mgmt MAX10      |
+| `PG_C2M`      | n/a           | board-mgmt MAX10      |
+| `GA[1:0]`     | n/a           | board pull-ups only   |
+
+**Resolution applied (2026-05-17):**
+- Stage 4 SV top exports only `fmc_prsnt_n` (no `fmc_pg_m2c`, `fmc_pg_c2m`,
+  `fmc_ga`); qsf carries only `set_location_assignment PIN_K8 -to fmc_prsnt_n`
+  for housekeeping.
+- `dac_subsys` keeps the `u_pg_c2m_pio` instance internally so HPS can write
+  and read back the bit (dac_status_word[2] loopback); the conduit dangles
+  inside baseline_top because the FPGA package pin does not exist.
+- `dac_status_word[1]` (PG_M2C) and `dac_status_word[4:3]` (GA) are tied
+  to 0 in agilex5_devkit.sv with explanatory comments.
+
+**Impact:** None on Stage 4 verification — `PRSNT_N` is sufficient for the
+"AD9176 mezzanine present" indication used by the Stage 6 JESD bring-up
+handshake. The MAX10 likely handles PG_M2C/PG_C2M autonomously per the FMC
+spec; if Stage 5 or later finds firmware needs runtime visibility, the
+path is via the MAX10's own interface (SDM or board-mgmt path), not the
+FMC connector.
+
+---
+
+## ISSUE-013: Stage 1 baseline retargeting dropped 48 HPS IO48 pin locations
+
+**Date:** 2026-05-17
+**Module:** `projects/agilex5_devkit/agilex5_devkit.qsf` (HPS Peripherals block)
+**Status:** Closed (Stage 4) — pin locations restored from upstream
+`legacy_baseline.qsf`
+
+**Description:**
+The upstream Stage 0 GHRD `baseline_a55.qsf` ships with IO_STANDARD,
+CURRENT_STRENGTH_NEW, and WEAK_PULL_UP_DN_SEL assignments for the 48 HPS
+IO48 peripheral pins (`hps_jtag_*`, `hps_sdmmc_*`, `hps_emac0_*`,
+`hps_spim0_*`, `hps_uart0_*`, `hps_i3c1_*`, `hps_trace_*`, `hps_gpio1_*`,
+`hps_osc_clk`) but **no** `set_location_assignment` lines for any of them.
+Stage 0 retargeting carried this gap into the Phase B repo's
+`agilex5_devkit.qsf` unchanged.
+
+Stages 1, 2, and 3 all used `quartus_sh -t build.tcl --project-only`
+(IP generation only) as their verify gate, so the fitter never ran on this
+project until Stage 4. The first full compile in Stage 4 surfaced the gap
+as `Error (171016): Can't place node ... -- illegal location assignment`
+and `Error (12677): No exact pin location assignment(s) for 48 pins of
+154 total pins` (PROMOTE_WARNING_TO_ERROR 12677 promotes the warning).
+
+**Resolution applied (2026-05-17):**
+Recovered all 48 HPS pin locations from
+`D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
+(same DK-A5E065BB32AES1 dev kit family, ES SR0 silicon) and inserted them
+into `agilex5_devkit.qsf` immediately before the existing `IO_STANDARD`
+block under `# HPS IO48 Peripherals`. Full Stage 4 fit then completed
+cleanly (WNS +1.731 ns, 0 errors).
+
+**Action items:**
+- [x] Restore HPS pin locations (Stage 4 close-out).
+- [ ] PLAN.md Stage 1 retro-fix: the verify gate should have included at
+      least one full `quartus_sh -t build.tcl` (not just `--project-only`)
+      to catch this class of gap before later stages compound it.
+- [ ] Confirm upstream `legacy_baseline.qsf` pin locations match the
+      `oobe/baseline_a55.qsf` ones on first hardware bring-up — both target
+      the same dev kit but if Altera's pinout was ever revised between
+      revisions, the legacy snapshot could diverge.

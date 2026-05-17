@@ -31,11 +31,14 @@ agilex5_devkit (top)
     ├── u_niosv_subsys      — JTAG-to-Avalon master (extended to reach dac_subsys)
     └── u_dac_subsys        ← NEW
         ├── u_dac_controller_0    — Phase A IP (NCO, JESD transport, sync, FIFO, regs)
-        ├── u_jesd204b_gts_ss     — Intel JESD204B GTS Subsystem, mode 4, 2 links × 4 lanes
-        ├── u_spi_master          — Avalon-MM SPI Master to AD9176 (2 CS)
+        ├── u_jesd204b_gts_ss     — Intel JESD204B GTS Subsystem, mode 4, 2 links × 4 lanes (Stage 6)
+        ├── u_jesd_stub           — Phase B synthesis-only terminator (Stages 3-5; deleted in Stage 6)
+        ├── u_spi_master          — Avalon-MM SPI Master to AD9176 (2 CS, 25 MHz, 24-bit)
         ├── u_tx_en_pio           — 2-bit output PIO → FMC_TXEN_0/1
         ├── u_pe_ctrl_pio         — 1-bit output PIO → FMC_PE_CTRL
-        └── u_dac_status_pio      — 32-bit input PIO ← FMC PRSNT/PG, JESD status
+        ├── u_spi_en_pio          — 1-bit output PIO → FMC_SPI_EN (Stage 4)
+        ├── u_pg_c2m_pio          — 1-bit output PIO (dangling externally — MAX10 owns FMC PG_C2M; HPS-readable diagnostic)
+        └── u_dac_status_pio      — 32-bit input PIO ← FMC PRSNT_N + JESD status (Stage 6)
 ```
 
 ### Clock domains
@@ -58,34 +61,46 @@ agilex5_devkit (top)
 | └ `u_spi_master` | `0x0200_1000` | 64 B | Avalon-MM SPI Master CSR |
 | └ `u_tx_en_pio` | `0x0200_1100` | 16 B | TXEN_0/1 |
 | └ `u_pe_ctrl_pio` | `0x0200_1110` | 16 B | PE_CTRL |
-| └ `u_dac_status_pio` | `0x0200_1120` | 16 B | PRSNT, PG, link-ready, framer status |
-| └ `u_jesd204b_gts_ss` | `0x0200_2000` | 8 KB | JESD GTS Subsystem CSR |
+| └ `u_dac_status_pio` | `0x0200_1120` | 16 B | PRSNT_N (bit 0), PG_C2M loopback (bit 2), JESD status (bits 31:5 Stage 6) |
+| └ `u_spi_en_pio` | `0x0200_1130` | 16 B | FMC SPI level-shifter enable (Stage 4) |
+| └ `u_pg_c2m_pio` | `0x0200_1140` | 16 B | PG_C2M PIO (dangling — see [doc/potential_issues.md ISSUE-012](doc/potential_issues.md)) |
+| └ `u_jesd204b_gts_ss` | `0x0200_2000` | 8 KB | JESD GTS Subsystem CSR (Stage 6) |
 
-The NiosV JTAG-to-Avalon master is wired to the same `axi_csr` so System Console can drive every register without booting Linux.
+The NiosV JTAG-to-Avalon master path to `axi_csr` is deferred to Stage 6 alongside GTS bring-up — Stage 4's `devmem` over LWH2F is the primary CSR access path.
 
 ### External interfaces
 
-| Signal group | FMC pin | FPGA bank | IO standard |
-|--------------|---------|-----------|-------------|
-| `fmc_serdin_tx[7:0]_p/n` | FMC_TX0..TX7 | UX 4B / 4C | HSST (transceiver) |
-| `fmc_gbtclk0_p/n` | D4/D5 | UX 4B | LVPECL (transceiver refclk) |
-| `fmc_sysref_p/n` | LA00 (G6/G7) CC | HSIO 3B | LVDS, 1.2 V |
-| `fmc_sync0_p/n` | LA01 (D8/D9) CC | HSIO 3B | LVDS, 1.2 V |
-| `fmc_sync1_p/n` | LA02 (H7/H8) | HSIO 3B | LVDS, 1.2 V |
-| `fmc_spi_sck` | LA03_P (G9) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_spi_mosi` | LA03_N (G10) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_spi_miso` | LA04_P (H10) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_spi_cs1_n` | LA04_N (H11) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_spi_cs2_n` | LA05_P (D11) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_spi_en` | LA05_N (D12) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_txen[1:0]` | LA06_P/N (C10/C11) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_pe_ctrl` | LA07_P (H13) | HSIO 3B | 1.2-V LVCMOS |
-| `fmc_prsnt_n` | H2 | 3.3-V housekeeping | 3.3-V LVCMOS |
-| `fmc_pg_m2c` | F1 | 3.3-V housekeeping | 3.3-V LVCMOS |
-| `fmc_pg_c2m` | D1 | 3.3-V housekeeping | 3.3-V LVCMOS |
-| `fmc_ga[1:0]` | D35/C34 | 3.3-V housekeeping | 3.3-V LVCMOS |
+FPGA package pins are recovered from the user-annotated [AD9176_Dev_Pinout.txt](AD9176_Dev_Pinout.txt) rightmost column. The "Pin Number" column in [Agilex_FMC_Pinout.txt](Agilex_FMC_Pinout.txt) is the VITA 57.1 **FMC-connector** grid coordinate, NOT the FPGA BGA package pin — do not use it for `set_location_assignment`. Stage 4 discovered this the hard way (see [doc/potential_issues.md ISSUE-012/013](doc/potential_issues.md)).
 
-Full cross-reference is in [doc/fmc_pinout_crossref.md](doc/fmc_pinout_crossref.md). Source-of-truth pinout text files are [Agilex_FMC_Pinout.txt](Agilex_FMC_Pinout.txt) (FMC connector J34) and [AD9176_Dev_Pinout.txt](AD9176_Dev_Pinout.txt) (AD9176-FMC-EBZ P1).
+| Signal group | FMC connector | FPGA pin | FPGA bank | IO standard |
+|--------------|---------------|----------|-----------|-------------|
+| `fmc_serdin_tx[7:0]_p/n` | FMC_TX0..TX7 | AU/AR/AN/AL/BE/BC/BA/AW + 7/10 | UX 4B / 4C | HSST (Stage 5) |
+| `fmc_gbtclk0_p/n` | D4/D5 (BR40) | AP16/AP21 | UX 4B | LVPECL (Stage 5) |
+| `fmc_sysref_p/n` | G6/G7 (LA00_CC) | A45/B42 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
+| `fmc_sync0_p/n` | D8/D9 (LA01_CC) | B45/A48 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
+| `fmc_sync1_p/n` | H7/H8 (LA02) | B51/A51 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
+| `fmc_spi_sck` | G9 (LA03_P) | **A54** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_spi_mosi` | G10 (LA03_N) | **B54** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_spi_miso` | H10 (LA04_P) | **A63** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_spi_cs1_n` | H11 (LA04_N) | **B60** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_spi_cs2_n` | D11 (LA05_P) | **B56** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_spi_en` | D12 (LA05_N) | **A60** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_txen[0]` | C10 (LA06_P) | **M58** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_txen[1]` | C11 (LA06_N) | **K58** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_pe_ctrl` | H13 (LA07_P) | **F47** | HSIO 3B | 1.2-V (Stage 4 ✓) |
+| `fmc_prsnt_n` | H2 (PRSNT_M2C_L) | **K8** | 3.3-V housekeeping | 3.3-V LVCMOS (Stage 4 ✓) |
+
+Agilex 5 IO standard at 1.2 V is `"1.2-V"` (no `LVCMOS` suffix — implicit at this voltage); at 3.3 V it is `"3.3-V LVCMOS"`.
+
+**Owned by the on-board MAX10 board-mgmt FPGA, NOT routed to the main Agilex** (see [doc/potential_issues.md ISSUE-012](doc/potential_issues.md)):
+
+| Signal | FMC connector | Notes |
+|--------|---------------|-------|
+| `PG_M2C` | F1 | MAX10 handles the FMC power-good handshake autonomously |
+| `PG_C2M` | D1 | dac_subsys keeps an internal `u_pg_c2m_pio` for HPS diagnostic readback; output dangles inside baseline_top |
+| `GA[1:0]` | C34, D35 | Board pull-ups only; never routed |
+
+The `doc/fmc_pinout_crossref.md` referenced in earlier drafts of this file is not yet written; until it is, use [AD9176_Dev_Pinout.txt](AD9176_Dev_Pinout.txt) as the authoritative source. For HPS IO48 pin locations, see the upstream-GHRD reference in §3.
 
 ---
 
@@ -98,6 +113,22 @@ Full cross-reference is in [doc/fmc_pinout_crossref.md](doc/fmc_pinout_crossref.
 | Verilator | any recent | lint only |
 | Python | 3.11.5 | invoked by GSRD Makefile |
 | Yocto | matches baseline GHRD | builds via `software/yocto_linux/` recipes |
+
+### Upstream GHRD reference (off-tree)
+
+The upstream Altera GHRD lives at `D:/agilex5e-ed-gsrd-main/` (outside the
+Phase B repo). Useful when the Phase B repo is missing a baseline-derived
+artifact — Stage 1 retargeting silently dropped some, e.g. the 48 HPS IO48
+pin locations recovered in Stage 4 (see [doc/potential_issues.md ISSUE-013](doc/potential_issues.md)).
+Search order for missing pin assignments / qsys parameters:
+
+1. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
+   — most complete for HPS IO48 peripheral pin LOCATIONS.
+2. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-oobe/baseline-a55/baseline_a55.qsf`
+   — Phase B Stage 0 baseline source; has IO_STANDARD / pull-up / drive
+   strength but no `set_location_assignment` for HPS pins.
+3. `D:/agilex5e-ed-gsrd-main/a5ed065b-premium-devkit-emmc/baseline-a55/baseline_a55.qsf`
+   — production-silicon (non-ES) variant; last-resort cross-check.
 
 ### Build commands
 

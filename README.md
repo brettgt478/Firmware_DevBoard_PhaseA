@@ -72,7 +72,9 @@ doc/                      - Architecture, JESD bring-up, issue logs
 | ----- | ------------------------------------- | ------- |
 | 1     | Repo merge & baseline retarget        | **Complete** |
 | 2     | Wrap Phase A as Platform Designer IP  | **Complete** |
-| 3-7   | dac_subsys, FMC SPI, JESD GTS, Linux  | Pending |
+| 3     | dac_subsys.qsys (control plane only)  | **Complete** |
+| 4     | Wire dac_subsys + FMC SPI pinout      | **Complete** |
+| 5-7   | GTS refclk, JESD GTS Subsystem, Linux | Pending |
 | 8     | System simulation                     | Pending |
 | 9     | Hygiene & doc finalization            | Pending |
 
