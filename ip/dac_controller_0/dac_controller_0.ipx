@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+dac_controller_0.ipx
+
+IP catalog index for the Phase A DAC controller component. Quartus's
+recursive IP_SEARCH_PATHS glob (../../ip/**/*) discovers _hw.tcl files
+at one nesting level deep but the project-local IP catalog cache has
+intermittent failures finding same-depth custom IPs when a Quartus-
+shipped IP (intel_jesd204b_gts) is added to the same qsys system.
+This explicit .ipx entry makes the catalog lookup deterministic.
+-->
+<library>
+  <path path="dac_controller_0_hw.tcl" />
+</library>

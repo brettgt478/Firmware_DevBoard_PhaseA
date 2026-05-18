@@ -20,14 +20,30 @@
 #               --script=baseline_top_phaseb_patches.tcl
 #
 # -----------------------------------------------------------------------------
-# Stage 4 patches (this run):
+# Stage 4 patches:
 #   - add_instance      u_dac_subsys (ip/dac_subsys/dac_subsys.qsys)
 #   - add_connection    u_shell_subsys.lwhps2fpga -> u_dac_subsys.axi_csr @ 0x02000000
 #   - add_connection    u_shell_subsys.system_clock -> u_dac_subsys.clock_sink_clk
-#   - add_connection    u_shell_subsys.system_clock -> u_dac_subsys.jesd_tx_link_clk  [Stage 6 rewires]
 #   - add_connection    u_shell_subsys.system_reset_n -> u_dac_subsys.axi_reset
-#   - add_connection    u_shell_subsys.system_reset_n -> u_dac_subsys.jesd_reset      [Stage 6 rewires]
 #   - export conduits:  dac_spi, dac_tx_en, dac_pe_ctrl, dac_spi_en, dac_pg_c2m, dac_status
+#
+# Stage 5 (merged) patches (this run):
+#   - Drop the system_clock -> jesd_tx_link_clk placeholder (Stage 4 stub);
+#     jesd_tx_link_clk is now driven externally from the top-SV loopback of
+#     u_jesd_link0.txphy_clk[0] via the exported dac_jesd_tx_link_clk sink.
+#   - Drop the system_reset_n -> jesd_reset placeholder; jesd_reset and
+#     jesd_reset_n are now exported as sinks so the top SV drives both from
+#     the system reset (active-high + active-low halves).
+#   - Add reset wiring: system_reset_n -> u_dac_subsys.axi_reset_n (active-low).
+#   - Export sinks:  dac_xcvr_refclk (clock), dac_jesd_tx_link_clk (clock),
+#                    dac_axi_reset_n (reset), dac_jesd_reset (reset),
+#                    dac_jesd_reset_n (reset).
+#   - Export conduits (JESD physical-layer pads + status):
+#                    dac_sysref_link0, dac_sysref_link1,
+#                    dac_sync_n_link0, dac_sync_n_link1,
+#                    dac_tx_serial_link0, dac_tx_serial_link0_n,
+#                    dac_tx_serial_link1, dac_tx_serial_link1_n,
+#                    dac_txphy_clk_out.
 # -----------------------------------------------------------------------------
 
 package require -exact qsys 14.0
@@ -58,14 +74,17 @@ load_system $working
 # u_dac_subsys instance (Stage 3 .qsys; library name = "dac_subsys").
 add_instance u_dac_subsys dac_subsys
 
-# Clock + reset wiring (Stage 4).
-# system_clock (100 MHz) feeds both the AXI control path and the JESD-side
-# clock_sink as a Stage 4 placeholder; Stage 6 reroutes jesd_tx_link_clk to
-# the ~250 MHz JESD GTS link-layer clock.
-add_connection u_shell_subsys.system_clock u_dac_subsys.clock_sink_clk
-add_connection u_shell_subsys.system_clock u_dac_subsys.jesd_tx_link_clk
+# Clock + reset wiring (Stage 4 + 5 merged).
+#   AXI control plane: system_clock (100 MHz) + system_reset_n (driven through
+#   both the active-high axi_reset and active-low axi_reset_n bridges inside
+#   dac_subsys).
+#   JESD link clock and JESD reset are now external: jesd_tx_link_clk is
+#   sourced from the top-SV loopback of u_jesd_link0.txphy_clk[0]; jesd_reset
+#   and jesd_reset_n are driven from the system reset at the top SV.
+#   GBTCLK0 transceiver refclk is also external (xcvr_refclk sink).
+add_connection u_shell_subsys.system_clock   u_dac_subsys.clock_sink_clk
 add_connection u_shell_subsys.system_reset_n u_dac_subsys.axi_reset
-add_connection u_shell_subsys.system_reset_n u_dac_subsys.jesd_reset
+add_connection u_shell_subsys.system_reset_n u_dac_subsys.axi_reset_n
 
 # LWH2F AXI4 master from HPS reaches the dac_subsys AXI CSR window at
 # 0x0200_0000 (16 KB span). Qsys auto-inserts an AXI4-to-Avalon-MM adapter
@@ -95,6 +114,53 @@ set_interface_property dac_pg_c2m EXPORT_OF u_dac_subsys.pg_c2m
 
 add_interface dac_status conduit end
 set_interface_property dac_status EXPORT_OF u_dac_subsys.dac_status
+
+# Stage 5 (merged) JESD external interfaces.
+# Clock sinks for top-SV loopback / external refclk.
+add_interface dac_xcvr_refclk clock sink
+set_interface_property dac_xcvr_refclk EXPORT_OF u_dac_subsys.xcvr_refclk
+
+add_interface dac_xcvr_refclk_4c clock sink
+set_interface_property dac_xcvr_refclk_4c EXPORT_OF u_dac_subsys.xcvr_refclk_4c
+
+add_interface dac_jesd_tx_link_clk clock sink
+set_interface_property dac_jesd_tx_link_clk EXPORT_OF u_dac_subsys.jesd_tx_link_clk
+
+# Reset sinks (active-low jesd_reset_n pair + active-high jesd_reset; the
+# axi_reset_n pair is already driven internally by add_connection above).
+add_interface dac_jesd_reset reset sink
+set_interface_property dac_jesd_reset EXPORT_OF u_dac_subsys.jesd_reset
+
+add_interface dac_jesd_reset_n reset sink
+set_interface_property dac_jesd_reset_n EXPORT_OF u_dac_subsys.jesd_reset_n
+
+# JESD physical-layer conduits (SYSREF, SYNC_N, TX serial pairs, txphy_clk).
+add_interface dac_sysref_link0 conduit end
+set_interface_property dac_sysref_link0 EXPORT_OF u_dac_subsys.sysref_link0
+
+add_interface dac_sysref_link1 conduit end
+set_interface_property dac_sysref_link1 EXPORT_OF u_dac_subsys.sysref_link1
+
+add_interface dac_sync_n_link0 conduit end
+set_interface_property dac_sync_n_link0 EXPORT_OF u_dac_subsys.sync_n_link0
+
+add_interface dac_sync_n_link1 conduit end
+set_interface_property dac_sync_n_link1 EXPORT_OF u_dac_subsys.sync_n_link1
+
+add_interface dac_tx_serial_link0 conduit end
+set_interface_property dac_tx_serial_link0 EXPORT_OF u_dac_subsys.tx_serial_link0
+
+add_interface dac_tx_serial_link0_n conduit end
+set_interface_property dac_tx_serial_link0_n EXPORT_OF u_dac_subsys.tx_serial_link0_n
+
+add_interface dac_tx_serial_link1 conduit end
+set_interface_property dac_tx_serial_link1 EXPORT_OF u_dac_subsys.tx_serial_link1
+
+add_interface dac_tx_serial_link1_n conduit end
+set_interface_property dac_tx_serial_link1_n EXPORT_OF u_dac_subsys.tx_serial_link1_n
+
+add_interface dac_txphy_clk_out conduit end
+set_interface_property dac_txphy_clk_out EXPORT_OF u_dac_subsys.txphy_clk_out
 
 # -----------------------------------------------------------------------------
 # Save the patched system.

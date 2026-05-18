@@ -217,7 +217,7 @@ Altera and sold by Altera or its authorized distributors.-->
                 &lt;suppliedSystemInfos&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_RATE&lt;/key&gt;
@@ -225,7 +225,7 @@ Altera and sold by Altera or its authorized distributors.-->
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;RESET_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                 &lt;/suppliedSystemInfos&gt;
                 &lt;consumedSystemInfos/&gt;
@@ -251,7 +251,7 @@ Altera and sold by Altera or its authorized distributors.-->
                 &lt;suppliedSystemInfos&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_RATE&lt;/key&gt;
@@ -259,7 +259,7 @@ Altera and sold by Altera or its authorized distributors.-->
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;RESET_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                 &lt;/suppliedSystemInfos&gt;
                 &lt;consumedSystemInfos/&gt;
@@ -289,7 +289,7 @@ Altera and sold by Altera or its authorized distributors.-->
                 &lt;suppliedSystemInfos&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_RATE&lt;/key&gt;
@@ -297,7 +297,7 @@ Altera and sold by Altera or its authorized distributors.-->
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;RESET_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                 &lt;/suppliedSystemInfos&gt;
                 &lt;consumedSystemInfos/&gt;
@@ -310,7 +310,7 @@ Altera and sold by Altera or its authorized distributors.-->
                 &lt;suppliedSystemInfos&gt;
                     &lt;entry&gt;
                         &lt;key&gt;ADDRESS_MAP&lt;/key&gt;
-                        &lt;value&gt;&amp;lt;address-map&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_system_id.control_slave' start='0x10000' end='0x10008' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_push_buttons.s1' start='0x10060' end='0x10070' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_switches.s1' start='0x10070' end='0x10080' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_leds.s1' start='0x10080' end='0x10090' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_dac_controller_0.lwhpm2fpga' start='0x2000000' end='0x2000400' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_spi_master.spi_control_port' start='0x2001000' end='0x2001020' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_tx_en_pio.s1' start='0x2001100' end='0x2001110' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_pe_ctrl_pio.s1' start='0x2001110' end='0x2001120' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_dac_status_pio.s1' start='0x2001120' end='0x2001130' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_spi_en_pio.s1' start='0x2001130' end='0x2001140' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_pg_c2m_pio.s1' start='0x2001140' end='0x2001150' datawidth='32' /&amp;gt;&amp;lt;/address-map&amp;gt;&lt;/value&gt;
+                        &lt;value&gt;&amp;lt;address-map&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_system_id.control_slave' start='0x10000' end='0x10008' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_push_buttons.s1' start='0x10060' end='0x10070' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_switches.s1' start='0x10070' end='0x10080' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_fabric_subsys.u_user_leds.s1' start='0x10080' end='0x10090' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_dac_controller_0.lwhpm2fpga' start='0x2000000' end='0x2000400' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_spi_master.spi_control_port' start='0x2001000' end='0x2001020' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_tx_en_pio.s1' start='0x2001100' end='0x2001110' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_pe_ctrl_pio.s1' start='0x2001110' end='0x2001120' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_dac_status_pio.s1' start='0x2001120' end='0x2001130' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_spi_en_pio.s1' start='0x2001130' end='0x2001140' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_pg_c2m_pio.s1' start='0x2001140' end='0x2001150' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_jesd_link0.jesd204_tx_avs' start='0x2002000' end='0x2002400' datawidth='32' /&amp;gt;&amp;lt;slave name='parent/u_dac_subsys.u_jesd_link1.jesd204_tx_avs' start='0x2003000' end='0x2003400' datawidth='32' /&amp;gt;&amp;lt;/address-map&amp;gt;&lt;/value&gt;
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;ADDRESS_WIDTH&lt;/key&gt;
@@ -327,7 +327,7 @@ Altera and sold by Altera or its authorized distributors.-->
                 &lt;suppliedSystemInfos&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;CLOCK_RATE&lt;/key&gt;
@@ -335,7 +335,7 @@ Altera and sold by Altera or its authorized distributors.-->
                     &lt;/entry&gt;
                     &lt;entry&gt;
                         &lt;key&gt;RESET_DOMAIN&lt;/key&gt;
-                        &lt;value&gt;7&lt;/value&gt;
+                        &lt;value&gt;12&lt;/value&gt;
                     &lt;/entry&gt;
                 &lt;/suppliedSystemInfos&gt;
                 &lt;consumedSystemInfos/&gt;
@@ -1009,7 +1009,7 @@ Altera and sold by Altera or its authorized distributors.-->
             <ipxact:parameter parameterId="AUTO_LWHPS2FPGA_ADDRESS_MAP" type="string">
               <ipxact:name>AUTO_LWHPS2FPGA_ADDRESS_MAP</ipxact:name>
               <ipxact:displayName>Auto ADDRESS_MAP</ipxact:displayName>
-              <ipxact:value>&lt;address-map&gt;&lt;slave name='parent/u_fabric_subsys.u_system_id.control_slave' start='0x10000' end='0x10008' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_push_buttons.s1' start='0x10060' end='0x10070' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_switches.s1' start='0x10070' end='0x10080' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_leds.s1' start='0x10080' end='0x10090' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_dac_controller_0.lwhpm2fpga' start='0x2000000' end='0x2000400' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_spi_master.spi_control_port' start='0x2001000' end='0x2001020' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_tx_en_pio.s1' start='0x2001100' end='0x2001110' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_pe_ctrl_pio.s1' start='0x2001110' end='0x2001120' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_dac_status_pio.s1' start='0x2001120' end='0x2001130' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_spi_en_pio.s1' start='0x2001130' end='0x2001140' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_pg_c2m_pio.s1' start='0x2001140' end='0x2001150' datawidth='32' /&gt;&lt;/address-map&gt;</ipxact:value>
+              <ipxact:value>&lt;address-map&gt;&lt;slave name='parent/u_fabric_subsys.u_system_id.control_slave' start='0x10000' end='0x10008' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_push_buttons.s1' start='0x10060' end='0x10070' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_switches.s1' start='0x10070' end='0x10080' datawidth='32' /&gt;&lt;slave name='parent/u_fabric_subsys.u_user_leds.s1' start='0x10080' end='0x10090' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_dac_controller_0.lwhpm2fpga' start='0x2000000' end='0x2000400' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_spi_master.spi_control_port' start='0x2001000' end='0x2001020' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_tx_en_pio.s1' start='0x2001100' end='0x2001110' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_pe_ctrl_pio.s1' start='0x2001110' end='0x2001120' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_dac_status_pio.s1' start='0x2001120' end='0x2001130' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_spi_en_pio.s1' start='0x2001130' end='0x2001140' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_pg_c2m_pio.s1' start='0x2001140' end='0x2001150' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_jesd_link0.jesd204_tx_avs' start='0x2002000' end='0x2002400' datawidth='32' /&gt;&lt;slave name='parent/u_dac_subsys.u_jesd_link1.jesd204_tx_avs' start='0x2003000' end='0x2003400' datawidth='32' /&gt;&lt;/address-map&gt;</ipxact:value>
             </ipxact:parameter>
             <ipxact:parameter parameterId="AUTO_LWHPS2FPGA_ADDRESS_WIDTH" type="string">
               <ipxact:name>AUTO_LWHPS2FPGA_ADDRESS_WIDTH</ipxact:name>

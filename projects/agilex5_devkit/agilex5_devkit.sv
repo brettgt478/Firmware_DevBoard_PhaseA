@@ -102,10 +102,41 @@ module agilex5_devkit (
     // FMC housekeeping (3.3-V LVCMOS, Stage 4)
     // - GA[1:0] are board pull-ups on this dev kit, not routed to the FPGA.
     // - PG_M2C / PG_C2M are routed to the on-board MAX10 board-mgmt FPGA on
-    //   this dev kit, not to the main FPGA. The MAX10 likely handles the
-    //   power-good handshake autonomously; revisit in Stage 5 if firmware
-    //   ends up needing visibility into them.
-    input  wire         fmc_prsnt_n
+    //   this dev kit, not to the main FPGA. The MAX10 handles the power-good
+    //   handshake autonomously.
+    input  wire         fmc_prsnt_n,
+    //
+    // JESD204B GTS reference clocks - FMC GBTCLK0/1_M2C (HSST refclk pads)
+    // Both 312.5 MHz from the AD9176-FMC-EBZ HMC7044 (PLL2; common reference
+    // via the same HMC7044, phase-locked). Agilex 5 GTS does not route a
+    // refclk across transceiver tiles, so each link needs its own refclk
+    // in the matching tile (CLAUDE.md ISSUE-015):
+    //   GBTCLK0 (FMC D4/D5 -> AP16/AP21, UX 4B) drives u_jesd_link0 (TX0..TX3)
+    //   GBTCLK1 (FMC B20/B21 -> AV16/AV21, UX 4C) drives u_jesd_link1 (TX4..TX7)
+    // Only _p side named in RTL; _n complement handled implicitly by Quartus
+    // via the "CURRENT MODE LOGIC (CML)" IO_STANDARD.
+    input  wire         fmc_gbtclk0_p,
+    input  wire         fmc_gbtclk1_p,
+    //
+    // JESD204B SYSREF (LVDS 1.2-V, HSIO 3B LA00_CC, source-sync subclass-1)
+    // Quartus infers the LVDS_RX buffer from the IO_STANDARD assignment in
+    // the qsf; only the _p pad is named in RTL, the _n location is set via
+    // the "(n)" notation in the qsf.
+    input  wire         fmc_sysref,
+    //
+    // JESD204B SYNC_N (LVDS 1.2-V, HSIO 3B LA01_CC / LA02)
+    // AD9176 (RX side) drives SYNC_N to request alignment; FPGA TX samples.
+    // (Confirmed from D:/altera_pro/26.1/.../j204b_gts_ports.csv line 21:
+    //  jesd204_tx_sync_n is an INPUT to the TX IP.)
+    input  wire         fmc_sync0,
+    input  wire         fmc_sync1,
+    //
+    // JESD204B TX serial lanes - FMC TX0..TX7 (UX 4B / UX 4C HSST)
+    // Routed externally to the AD9176-FMC-EBZ SERDIN0..SERDIN7 in a
+    // scrambled order; the logical->physical lane map is captured in the
+    // GTS IP wizard config inside ip/dac_subsys/dac_subsys.tcl.
+    output wire [7:0]   fmc_serdin_tx_p,
+    output wire [7:0]   fmc_serdin_tx_n
 );
     // Constants
     localparam LED_PIO_WIDTH = 32;
@@ -178,10 +209,62 @@ module agilex5_devkit (
     //   [2]    = pg_c2m_loopback (what u_pg_c2m_pio is driving; physical pin
     //                              dangles -- routed to MAX10 board-mgmt FPGA)
     //   [4:3]  = reserved (GA[1:0] not routed to FPGA on this dev kit)
-    //   [31:5] = '0       (reserved; JESD link status added in Stage 6)
+    //   [5]    = fmc_ready (Stage 5 (merged): gates JESD GTS reset deassertion)
+    //   [31:6] = '0       (reserved; JESD link status added in later stage)
     wire fmc_pg_c2m_drive;          // PIO output bit (dangling externally)
+    wire fmc_ready_internal;
     wire [31:0] dac_status_word;
-    assign dac_status_word = {29'd0, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
+    assign dac_status_word = {26'd0, fmc_ready_internal, 1'b0, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
+
+    // Stage 5 (merged): FMC presence + power-good gate. PG_M2C is owned by
+    // the on-board MAX10 board-mgmt FPGA (CLAUDE.md ISSUE-012); the MAX10
+    // gates FMC VADJ and reports power-good back to the AD9176-FMC-EBZ
+    // autonomously. From the main Agilex's perspective we tie pg_m2c high
+    // and let the prsnt_n debounce drive the FPGA-side handshake.
+    fmc_handshake u_fmc_handshake (
+        .clk         (sys_clk_100),
+        .rst         (~sys_clk_100_reset_n),
+        .fmc_prsnt_n (fmc_prsnt_n),
+        .fmc_pg_m2c  (1'b1),
+        .fmc_ready   (fmc_ready_internal)
+    );
+
+    // Stage 5 (merged): JESD reset gates on fmc_ready per CLAUDE.md s6 #4.
+    // jesd_reset_n: active-low; deasserted only when both system reset is
+    // deasserted AND fmc_ready is asserted. jesd_reset is the active-high
+    // companion that goes to the u_clk_bridge_jesd-domain reset bridge.
+    wire jesd_reset_n_gated  = fpga_reset_n & fmc_ready_internal;
+    wire jesd_reset_active_h = ~jesd_reset_n_gated;
+
+    // Stage 5 (merged): JESD SYSREF capture. Differential LVDS_RX is inferred
+    // by Quartus from the "1.2-V TRUE DIFFERENTIAL SIGNALING" IO_STANDARD in
+    // the qsf; only the _p pad appears in RTL. 2-stage synchronizer captures
+    // the SYSREF edge into the JESD link clock domain (subclass-1).
+    wire sysref_captured;
+    wire jesd_link_clk;          // loopback from u_jesd_link0.txphy_clk[0]
+    sysref_capture u_sysref_capture (
+        .sysref_in  (fmc_sysref),
+        .link_clk   (jesd_link_clk),
+        .rst_n      (jesd_reset_n_gated),
+        .sysref_out (sysref_captured)
+    );
+
+    // Stage 5 (merged): GBTCLK0/1 refclk pads (HSST transceiver refclk pads on
+    // UX 4B / UX 4C). Only _p in RTL; CML IO_STANDARD in qsf tells Quartus
+    // these are differential refclks (the _n complement is auto-placed).
+    wire fmc_gbtclk0_buf;
+    wire fmc_gbtclk1_buf;
+    assign fmc_gbtclk0_buf = fmc_gbtclk0_p;
+    assign fmc_gbtclk1_buf = fmc_gbtclk1_p;
+
+    // Stage 5 (merged): txphy_clk loopback. u_jesd_link0 drives
+    // dac_txphy_clk_out (4-bit, one per lane); the [0] lane feeds back into
+    // u_clk_bridge_jesd as the jesd_tx_link_clk source. The loop is closed
+    // here in fabric (the actual cycle break is the txphy_clk output buffer
+    // inside the GTS PMA). Both GTS IPs share txlink_clk so the data path
+    // is isomorphic across links.
+    wire [3:0] dac_txphy_clk_bus;
+    assign jesd_link_clk = dac_txphy_clk_bus[0];
 
     // Baseline-A55 system top module
     baseline_top u_baseline_top (
@@ -291,7 +374,31 @@ module agilex5_devkit (
         // for PG_C2M (FMC D1) is owned by the board-mgmt MAX10, not the main
         // FPGA, so this net never reaches a package pin.
         .dac_pg_c2m_export                    (fmc_pg_c2m_drive),
-        .dac_status_export                    (dac_status_word)
+        .dac_status_export                    (dac_status_word),
+        //
+        // Stage 5 (merged) JESD external interfaces.
+        // Clock sinks (driven from top SV).
+        .dac_xcvr_refclk_clk                  (fmc_gbtclk0_buf),
+        .dac_xcvr_refclk_4c_clk               (fmc_gbtclk1_buf),
+        .dac_jesd_tx_link_clk_clk             (jesd_link_clk),
+        // Reset sinks (active-high jesd_reset + active-low jesd_reset_n,
+        // both gated on fmc_ready).
+        .dac_jesd_reset_reset                 (jesd_reset_active_h),
+        .dac_jesd_reset_n_reset_n             (jesd_reset_n_gated),
+        // SYSREF: same captured single-bit drives both link IPs.
+        .dac_sysref_link0_export              (sysref_captured),
+        .dac_sysref_link1_export              (sysref_captured),
+        // SYNC_N from AD9176 (FPGA TX samples).
+        .dac_sync_n_link0_export              (fmc_sync0),
+        .dac_sync_n_link1_export              (fmc_sync1),
+        // TX serial lanes (4 per link, 8 total → FMC TX0..TX7 via scrambled
+        // logical-to-physical map; physical pin order set by qsf).
+        .dac_tx_serial_link0_export           (fmc_serdin_tx_p[3:0]),
+        .dac_tx_serial_link0_n_export         (fmc_serdin_tx_n[3:0]),
+        .dac_tx_serial_link1_export           (fmc_serdin_tx_p[7:4]),
+        .dac_tx_serial_link1_n_export         (fmc_serdin_tx_n[7:4]),
+        // txphy_clk loopback (link0 drives link clock for both IPs).
+        .dac_txphy_clk_out_export             (dac_txphy_clk_bus)
     );
 
 endmodule

@@ -37,3 +37,6 @@ SYNC1_N          | H8      |  LA02_N            |  FMC_1V2_LA_N2    | A51
 FMC_MISO       | H10    |  LA04_P            |  FMC_1V2_LA_P4    | A63
 FMC_CS1          | H11   |  LA04_N            |  FMC_1V2_LA_N4    | B60
 FMC_PE_CTRL| H13   |  LA07_P           |  FMC_1V2_LA_P7     | F47
+
+BR40_EXT_P                             |    B20       |  GBTCLK1_M2C_P  | AV16
+ BR40_EXT_N                            |     B21      |  GBTCLK1_M2C_N  | AV21

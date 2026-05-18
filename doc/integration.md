@@ -525,6 +525,96 @@ writes, voltage swings 0 V ↔ 1.2 V.
 
 ---
 
+## Stage 5 (merged with original Stage 6) — JESD204B GTS Subsystem integration
+
+**PLAN reference:** [PLAN.md Stage 5 (merged)](../PLAN.md#stage-5-merged-with-original-stage-6--jesd204b-gts-subsystem-integration--fmc-differential-ports)
+
+**What got deferred:**
+
+- **Eye diagram + BER on SERDIN lanes** — needs a high-speed scope
+  (≥ 25 GHz BW) or BERT instrument. Cross-ref:
+  [deferred_hw_gates.md](deferred_hw_gates.md) Stage 5 entry.
+- **JESD link bring-up to AD9176** — needs AD9176-FMC-EBZ mounted,
+  HMC7044 configured to drive GBTCLK0 + SYSREF, AD9176 SPI bring-up
+  sequence executed via System Console or Linux.
+- **Subclass-1 deterministic latency confirmation** — needs the
+  AD9176-FMC-EBZ source-sync SYSREF/GBTCLK0 strap verified per the
+  AD9176 datasheet table referenced in
+  [jesd_bringup_sequence.md](jesd_bringup_sequence.md).
+
+### Procedure 5.A — JESD link bring-up + first sine wave on AD9176 RF out
+
+**Goal.** Confirm the merged Stage 5 (merged) bitstream brings up both
+JESD204B links to the AD9176, releases SYNC, and produces a clean sine
+on at least one AD9176 RF output.
+
+**Hardware required:**
+
+- DK-A5E065BB32AES1 dev kit, USB-Blaster (JTAG), ATX 12 V supply
+  (J17), AD9176-FMC-EBZ mezzanine seated in FMC slot, VADJ set to 1.2 V
+  (CRITICAL — see [CLAUDE.md §6 #3](../CLAUDE.md#6-critical-constraints))
+- HMC7044 configured for GBTCLK0 = 312.5 MHz, SYSREF per AD9176-FMC-EBZ
+  default (low-rate, divides DEV_CLK)
+- Scope with ≥ 1 GHz BW on AD9176 RF output J1 (or any of J1..J4)
+- System Console (Quartus 26.1) over JTAG, OR Linux booted with
+  `devmem` reachable
+
+**Steps:**
+
+1. Build + flash `agilex5_devkit.sof` (or
+   `agilex5_devkit_time_limited.sof` if the workstation lacks the
+   JESD204B IP license -- see
+   [potential_issues.md ISSUE-016](potential_issues.md#issue-016-jesd204b-fpga-ip-for-f-tile-is-opencore-plus-on-this-workstation))
+   via Quartus Programmer (or boot FPGA via `core.rbf` from the dev kit
+   SD card). The time-limited variant halts after ~1 hour and must be
+   re-flashed to recover.
+2. From System Console, confirm the dac_controller_0 ID register reads
+   correctly at LWH2F base `0x0200_0000` (the heartbeat indicates
+   fabric is alive; same gate as Stage 4 Procedure 4.A).
+3. Confirm `fmc_ready` is asserted by reading the dac_status PIO at
+   `0x0200_1120` bit 5. If clear: check FMC seating (prsnt_n on
+   `fmc_prsnt_n`) and MAX10 power-good status on the board indicator
+   LEDs.
+4. Enable the FMC SPI buffer + drive PE_CTRL high (Stage 4
+   Procedure 4.B):
+   ```bash
+   devmem 0x02001130 32 0x1    # spi_en  <- 1 (FMC SPI buffer enable)
+   devmem 0x02001110 32 0x1    # pe_ctrl <- 1
+   ```
+5. Run the AD9176 init sequence from Phase A's
+   `D:\Firmware_PhaseA\src\hps\ad9176_init.c` adapted to the SPI master
+   CSR at `0x0200_1000`. The bring-up sequence is documented in
+   [jesd_bringup_sequence.md](jesd_bringup_sequence.md).
+6. Release SYNC: the GTS IPs will sample `fmc_sync0` / `fmc_sync1`
+   (AD9176 drives) and start transmitting JESD ILAS once SYNC goes
+   high.
+7. Poll JESD GTS CSRs at `0x0200_2000` (link 0) and `0x0200_3000`
+   (link 1) for link-ready bits. The GTS IP CSR map is in the Intel
+   JESD204B GTS IP User Guide (Quartus 26.1 doc set).
+8. Scope on AD9176 RF J1: should show the configured NCO sine wave.
+
+**Pass criterion:** both JESD links report link-ready; AD9176 RF
+output produces a recognizable sine wave at the configured NCO
+frequency (Stage 7 will fully exercise the NCO via the
+ad9176-config Linux tool — for Stage 5, even a default NCO tone
+suffices).
+
+**Failure path:**
+
+- If `fmc_ready` never asserts: trace `fmc_prsnt_n` on the dev kit
+  test point H2 (FMC_PRSNT_M2C_L); ensure FMC card is fully seated.
+- If JESD link does not lock: capture the GTS link state machine
+  via System Console (CSR readout at link0/link1 base), then file in
+  [potential_issues.md](potential_issues.md). Common failure modes:
+  HMC7044 not configured (no GBTCLK), VADJ not 1.2 V (HSIO 3B fails
+  to drive SYSREF/SYNC), SUBCLASSV strap mismatch (drop to subclass 0
+  via the IP's runtime CSR if subclass 1 won't lock).
+- If RF output is silent but JESD link is up: the AD9176 datapath
+  (interpolators, NCO, output mux) may need explicit register writes;
+  see AD9176 datasheet Table 50 (init sequence).
+
+---
+
 ## How to add a new stage's procedures
 
 When closing a stage, append a `## Stage N — <name>` section here that

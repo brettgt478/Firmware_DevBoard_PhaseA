@@ -1,15 +1,16 @@
 -- jesd_stub.vhd
 --
--- -- JESD STUB - REMOVE IN STAGE 6 --
+-- Synthesis terminator for the **non-data** JESD-side conduits of
+-- dac_controller_0. Stage 5 (merged) keeps this module to terminate the
+-- status/refclk/csr/pio/tx_enbl conduits that have no native counterpart on
+-- Intel's JESD204B GTS Subsystem IP. The two AVST data paths
+-- (jesd_link0_data, jesd_link1_data) are now wired to the real GTS IPs in
+-- ip/dac_subsys/dac_subsys.tcl and have been removed from this stub.
 --
--- Synthesis-only terminator for the JESD-side interfaces of dac_controller_0.
--- Used by ip/dac_subsys/dac_subsys.qsys in Stages 3-5 so the DAC subsystem
--- can be generated and built without the JESD204B GTS Subsystem IP wired up.
--- Stage 6 replaces this stub with the real GTS Subsystem instance.
+-- A future stage can delete this stub entirely once dac_controller_0_hw.tcl
+-- is redesigned to drop its now-unused JESD status/control conduits.
 --
 -- Interface mirror (this module is the conjugate of dac_controller_0):
---   jesd_link0_data     : Avalon-ST sink   (128-bit data, valid; ready='1')
---   jesd_link1_data     : Avalon-ST sink   (128-bit data, valid; ready='1')
 --   jesd_link0_status   : conduit          (drives somf, frame_ready; sinks frame_error)
 --   jesd_link1_status   : conduit          (drives frame_ready;       sinks frame_error)
 --   jesd_reset_seq      : conduit          (drives in_of_reset, rst_ack_n; sinks rst_n)
@@ -40,20 +41,6 @@ entity jesd_stub is
     -- ===================================================================
     jesd204_tx_link_clk_clk : in std_logic;
     reset_sink_reset        : in std_logic;
-
-    -- ===================================================================
-    -- Avalon-ST sink: JESD link 0 data (consumed and dropped)
-    -- ===================================================================
-    jesd_link0_data_data  : in  std_logic_vector(127 downto 0);
-    jesd_link0_data_valid : in  std_logic;
-    jesd_link0_data_ready : out std_logic;
-
-    -- ===================================================================
-    -- Avalon-ST sink: JESD link 1 data (consumed and dropped)
-    -- ===================================================================
-    jesd_link1_data_data  : in  std_logic_vector(127 downto 0);
-    jesd_link1_data_valid : in  std_logic;
-    jesd_link1_data_ready : out std_logic;
 
     -- ===================================================================
     -- Conduit: JESD link 0 status
@@ -128,16 +115,7 @@ end entity jesd_stub;
 
 architecture rtl of jesd_stub is
 
-  -- Tie AVST ready high so dac_controller_0 always sees a willing sink.
-  signal sink_ready : std_logic := '1';
-
 begin
-
-  -- =====================================================================
-  -- AVST sinks: accept everything, drop the payload
-  -- =====================================================================
-  jesd_link0_data_ready <= sink_ready;
-  jesd_link1_data_ready <= sink_ready;
 
   -- =====================================================================
   -- JESD link status: drive somf=0 and frame_ready=0
@@ -200,10 +178,6 @@ begin
   -- it into an unused signal.
   p_consume : process(jesd204_tx_link_clk_clk)
     variable v_pio_unused  : std_logic_vector(31 downto 0);
-    variable v_link0_data  : std_logic_vector(127 downto 0);
-    variable v_link0_valid : std_logic;
-    variable v_link1_data  : std_logic_vector(127 downto 0);
-    variable v_link1_valid : std_logic;
     variable v_link0_ferr  : std_logic;
     variable v_link1_ferr  : std_logic;
     variable v_rst_n       : std_logic;
@@ -213,10 +187,6 @@ begin
     if rising_edge(jesd204_tx_link_clk_clk) then
       if reset_sink_reset = '1' then
         v_pio_unused  := (others => '0');
-        v_link0_data  := (others => '0');
-        v_link0_valid := '0';
-        v_link1_data  := (others => '0');
-        v_link1_valid := '0';
         v_link0_ferr  := '0';
         v_link1_ferr  := '0';
         v_rst_n       := '0';
@@ -224,10 +194,6 @@ begin
         v_refclk_on   := (others => '0');
       else
         v_pio_unused  := pio_status_pio_status;
-        v_link0_data  := jesd_link0_data_data;
-        v_link0_valid := jesd_link0_data_valid;
-        v_link1_data  := jesd_link1_data_data;
-        v_link1_valid := jesd_link1_data_valid;
         v_link0_ferr  := jesd_link0_status_frame_error;
         v_link1_ferr  := jesd_link1_status_frame_error;
         v_rst_n       := jesd_reset_seq_rst_n;

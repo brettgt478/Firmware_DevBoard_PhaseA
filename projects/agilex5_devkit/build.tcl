@@ -177,11 +177,20 @@ if {[catch {exec >@stdout 2>@stderr quartus_asm $proj -c $rev} result]} {
     exit 1
 }
 
-set sof output_files/$rev.sof
-if {[file exists $sof]} {
-    puts "build.tcl: complete. SOF at $sof"
+# Accept either the fully-licensed SOF or the OpenCore-Plus time-limited
+# variant. The JESD204B GTS IP is OpenCore Plus on this workstation per
+# doc/potential_issues.md ISSUE-016 -- the assembler then emits
+# <rev>_time_limited.sof instead of <rev>.sof. Both are valid bitstreams
+# for bring-up; only the deployable image requires the full license.
+set sof_full    output_files/$rev.sof
+set sof_limited output_files/${rev}_time_limited.sof
+if {[file exists $sof_full]} {
+    puts "build.tcl: complete. SOF at $sof_full (full license)"
+    exit 0
+} elseif {[file exists $sof_limited]} {
+    puts "build.tcl: complete. SOF at $sof_limited (OpenCore Plus -- see ISSUE-016)"
     exit 0
 } else {
-    puts stderr "build.tcl: expected SOF $sof not produced"
+    puts stderr "build.tcl: neither $sof_full nor $sof_limited was produced"
     exit 1
 }

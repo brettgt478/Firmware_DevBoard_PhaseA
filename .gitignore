@@ -35,6 +35,16 @@ ip/dac_controller_0/dac_controller_0/
 # are source-of-truth. Same pattern as projects/agilex5_devkit/ip/fabric_subsys/.
 ip/dac_subsys/ip/dac_subsys/dac_subsys_u_*/
 
+# Stage 2 SPI smoke-test scratch artifacts (kept on disk for reference but
+# never part of the committed build flow).
+projects/*/smoke.ip
+projects/*/smoke/
+
+# GTS IP port-rotation parameter map: emitted by quartus_ipgenerate when the
+# JESD204B GTS IP fits its lanes; regenerated on every full compile and not
+# a source-of-truth artifact.
+projects/*/sm_hssi_port_rotation_param_map.json
+
 # Simulation artifacts
 **/work/
 **/transcript

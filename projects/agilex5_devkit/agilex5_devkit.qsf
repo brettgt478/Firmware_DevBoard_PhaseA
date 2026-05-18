@@ -582,7 +582,6 @@ set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_axi.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_jesd.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_csr_bridge.ip
-set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_dac_controller_0.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_spi_master.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_tx_en_pio.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_pe_ctrl_pio.ip
@@ -590,3 +589,115 @@ set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_spi_en_pio.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_pg_c2m_pio.ip
 set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_jesd_stub.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_xcvr_refclk.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_axi_n.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_rst_bridge_jesd_n.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_jesd_link0.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_jesd_link1.ip
+
+
+# -----------------------------------------------------------------------------
+# Stage 5 (merged): JESD204B GTS pin assignments + new RTL files + SDC
+#
+# All pin locations are FPGA BGA package pins recovered from
+# AD9176_Dev_Pinout.txt (rightmost "FPGA Pin" column). The FMC connector
+# coordinates (D4, A22, etc.) in Agilex_FMC_Pinout.txt are VITA 57.1
+# mezzanine grid, not FPGA package pins -- using those would fail "illegal
+# location assignment" at fitter time (Stage 4 lesson, ISSUE-013).
+#
+# Bank usage:
+#   GBTCLK0_M2C    : UX 4B HSST refclk pad (no IO_STANDARD; GTS IP sets it)
+#   SERDIN[7:0]    : UX 4B (lanes 0..3, pins A*) + UX 4C (lanes 4..7, pins B*)
+#                    HSST transceiver pads (no IO_STANDARD; GTS IP sets it)
+#   SYSREF, SYNC0/1: HSIO 3B LVDS 1.2 V, "1.2-V TRUE DIFFERENTIAL SIGNALING"
+#                    (per upstream a5ed065a-premium-devkit-emmc EMIF refclk)
+#
+# LVDS input convention: only the _p name appears in the SV RTL; the _n
+# location is assigned via the "name(n)" syntax. HSST diff pairs use
+# explicit _p / _n in RTL (per USB31 PHY pattern in upstream baseline_a55).
+# -----------------------------------------------------------------------------
+
+# JESD GTS refclks. Two refclks because Agilex 5 GTS cannot route a refclk
+# across transceiver tiles (ISSUE-015). Both 312.5 MHz from the
+# AD9176-FMC-EBZ HMC7044 (phase-locked via PLL2 to a common reference).
+#   GBTCLK0 (FMC D4/D5 = FPGA AP16/AP21, UX 4B) -> u_jesd_link0
+#   GBTCLK1 (FMC B20/B21 = FPGA AV16/AV21, UX 4C) -> u_jesd_link1
+# Only _p has an explicit location + IO_STANDARD; Quartus infers the _n
+# complement (PIN_AP21 / PIN_AV21) from CML pad-pair adjacency.
+set_location_assignment PIN_AP16 -to fmc_gbtclk0_p
+set_instance_assignment -name IO_STANDARD "CURRENT MODE LOGIC (CML)" -to fmc_gbtclk0_p
+set_location_assignment PIN_AV16 -to fmc_gbtclk1_p
+set_instance_assignment -name IO_STANDARD "CURRENT MODE LOGIC (CML)" -to fmc_gbtclk1_p
+
+# JESD SYSREF (FMC G6/G7 LA00_CC = FPGA A45/B42, HSIO 3B 1.2-V LVDS)
+set_location_assignment PIN_A45 -to fmc_sysref
+set_location_assignment PIN_B42 -to "fmc_sysref(n)"
+set_instance_assignment -name IO_STANDARD "1.2-V TRUE DIFFERENTIAL SIGNALING" -to fmc_sysref
+
+# JESD SYNC0 (FMC D8/D9 LA01_CC = FPGA B45/A48, HSIO 3B 1.2-V LVDS)
+# AD9176 drives, FPGA samples (input).
+set_location_assignment PIN_B45 -to fmc_sync0
+set_location_assignment PIN_A48 -to "fmc_sync0(n)"
+set_instance_assignment -name IO_STANDARD "1.2-V TRUE DIFFERENTIAL SIGNALING" -to fmc_sync0
+
+# JESD SYNC1 (FMC H7/H8 LA02 = FPGA B51/A51, HSIO 3B 1.2-V LVDS)
+set_location_assignment PIN_B51 -to fmc_sync1
+set_location_assignment PIN_A51 -to "fmc_sync1(n)"
+set_instance_assignment -name IO_STANDARD "1.2-V TRUE DIFFERENTIAL SIGNALING" -to fmc_sync1
+
+# JESD TX serial lanes (FMC TX0..TX7 = FPGA UX 4B + UX 4C HSST)
+# Lane index here is the FPGA-side fmc_serdin_tx[i]; the logical->physical
+# scramble (AD9176 SERDIN0..7 vs FMC TX0..7) is in the GTS IP wizard config.
+# Per AD9176_Dev_Pinout.txt FPGA Pin column:
+#   FMC_TX0_P/N (SERDIN7) = AU7  / AU10
+#   FMC_TX1_P/N (SERDIN6) = AR7  / AR10
+#   FMC_TX2_P/N (SERDIN5) = AN7  / AN10
+#   FMC_TX3_P/N (SERDIN4) = AL7  / AL10
+#   FMC_TX4_P/N (SERDIN2) = BE7  / BE10
+#   FMC_TX5_P/N (SERDIN0) = BC7  / BC10
+#   FMC_TX6_P/N (SERDIN1) = BA7  / BA10
+#   FMC_TX7_P/N (SERDIN3) = AW7  / AW10
+# fmc_serdin_tx[0..3] -> u_jesd_link0 (FMC_TX0..TX3 = UX 4B)
+# fmc_serdin_tx[4..7] -> u_jesd_link1 (FMC_TX4..TX7 = UX 4B (BE7) + UX 4C)
+set_location_assignment PIN_AU7  -to fmc_serdin_tx_p[0]
+set_location_assignment PIN_AU10 -to fmc_serdin_tx_n[0]
+set_location_assignment PIN_AR7  -to fmc_serdin_tx_p[1]
+set_location_assignment PIN_AR10 -to fmc_serdin_tx_n[1]
+set_location_assignment PIN_AN7  -to fmc_serdin_tx_p[2]
+set_location_assignment PIN_AN10 -to fmc_serdin_tx_n[2]
+set_location_assignment PIN_AL7  -to fmc_serdin_tx_p[3]
+set_location_assignment PIN_AL10 -to fmc_serdin_tx_n[3]
+set_location_assignment PIN_BE7  -to fmc_serdin_tx_p[4]
+set_location_assignment PIN_BE10 -to fmc_serdin_tx_n[4]
+set_location_assignment PIN_BC7  -to fmc_serdin_tx_p[5]
+set_location_assignment PIN_BC10 -to fmc_serdin_tx_n[5]
+set_location_assignment PIN_BA7  -to fmc_serdin_tx_p[6]
+set_location_assignment PIN_BA10 -to fmc_serdin_tx_n[6]
+set_location_assignment PIN_AW7  -to fmc_serdin_tx_p[7]
+set_location_assignment PIN_AW10 -to fmc_serdin_tx_n[7]
+
+# IO_STANDARD on SERDIN diff pairs (per upstream usb31_phy_tx_serial pattern)
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[0]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[0]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[1]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[1]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[2]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[2]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[3]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[3]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[4]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[4]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[5]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[5]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[6]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[6]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_p[7]
+set_instance_assignment -name IO_STANDARD "HIGH SPEED DIFFERENTIAL I/O" -to fmc_serdin_tx_n[7]
+
+# Stage 5 (merged) new RTL + SDC
+set_global_assignment -name SYSTEMVERILOG_FILE src/fmc_handshake.sv
+set_global_assignment -name VHDL_FILE          src/sysref_capture.vhd
+set_global_assignment -name SDC_FILE           sdc/fmc_io.sdc
+set_global_assignment -name SDC_FILE           sdc/jesd_cdc.sdc
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_xcvr_refclk_4c.ip
+set_global_assignment -name IP_FILE ../../ip/dac_subsys/ip/dac_subsys/dac_subsys_u_dac_controller_0.ip

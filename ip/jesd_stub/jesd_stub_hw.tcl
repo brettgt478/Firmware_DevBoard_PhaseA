@@ -1,17 +1,17 @@
 # jesd_stub_hw.tcl
 #
-# -- JESD STUB - REMOVE IN STAGE 6 --
+# Platform Designer descriptor for the **non-data** JESD-side terminator used
+# by ip/dac_subsys/dac_subsys.qsys.
 #
-# Platform Designer descriptor for the JESD-side terminator used by
-# ip/dac_subsys/dac_subsys.qsys in Stages 3-5. Its interface set is the
-# conjugate of dac_controller_0's JESD interfaces, so that an explicit
-# wiring of jesd_stub <-> dac_controller_0 in the qsys system produces a
-# clean (warning-free) generate.
+# Stage 5 (merged) added the real Intel JESD204B GTS Subsystem IP for the
+# two AVST data paths (jesd_link0_data, jesd_link1_data); those interfaces
+# have been removed from this stub. The remaining conduits (jesd_*_status,
+# jesd_reset_seq, jesd_refclk_ctrl, jesd_csr_readback, pio_*, tx_enbl) have
+# no native counterpart on the GTS IP and are still terminated here so
+# dac_controller_0 sees a complete set of conduit connections.
 #
-# Stage 6 deletes this component (and its parent ip/dac_subsys/jesd_stub/
-# directory) and replaces the wiring with the Intel JESD204B GTS
-# Subsystem IP. The deletion is intentionally one large hunk to make the
-# stub-to-real transition reviewable in a single diff.
+# A future stage can delete this stub entirely once dac_controller_0_hw.tcl
+# is redesigned to drop those now-unused conduits.
 
 package require -exact qsys 14.0
 
@@ -19,15 +19,15 @@ package require -exact qsys 14.0
 # Module
 # =============================================================================
 set_module_property NAME                jesd_stub
-set_module_property DISPLAY_NAME        "JESD-side stub (Stage 3 placeholder)"
-set_module_property VERSION             1.0
+set_module_property DISPLAY_NAME        "JESD non-data conduit terminator"
+set_module_property VERSION             1.1
 set_module_property GROUP               "Phase B DAC"
 set_module_property AUTHOR              "Brett Taylor"
-set_module_property DESCRIPTION         "Synthesis-only terminator for the\
- JESD-side ports of dac_controller_0. Terminates 2x Avalon-ST link sources,\
- drives JESD CSR readback fields with mode-4 spec-encoded nominals, and ties\
- off the reset/refclk control conduits. Replaced in Stage 6 by the real\
- JESD204B GTS Subsystem IP."
+set_module_property DESCRIPTION         "Terminates the JESD non-data\
+ status/refclk/CSR/pio/tx_enbl conduits of dac_controller_0. The two AVST\
+ data paths now flow to the real Intel JESD204B GTS Subsystem IP; this stub\
+ retains the JESD CSR readback (mode-4 spec-encoded nominals) and ties off\
+ the reset/refclk/pio/tx_enbl conduits."
 set_module_property ELABORATION_CALLBACK elaborate
 
 # =============================================================================
@@ -63,28 +63,10 @@ set_interface_property reset_sink synchronousEdges DEASSERT
 add_interface_port reset_sink reset_sink_reset reset Input 1
 
 # =============================================================================
-# Avalon-ST sinks for JESD link data (conjugate of dac_controller_0's sources)
-# =============================================================================
-add_interface jesd_link0_data avalon_streaming end
-set_interface_property jesd_link0_data associatedClock   jesd_tx_link_clk
-set_interface_property jesd_link0_data associatedReset   reset_sink
-set_interface_property jesd_link0_data dataBitsPerSymbol 128
-set_interface_property jesd_link0_data readyLatency      0
-add_interface_port jesd_link0_data jesd_link0_data_data  data  Input  128
-add_interface_port jesd_link0_data jesd_link0_data_valid valid Input  1
-add_interface_port jesd_link0_data jesd_link0_data_ready ready Output 1
-
-add_interface jesd_link1_data avalon_streaming end
-set_interface_property jesd_link1_data associatedClock   jesd_tx_link_clk
-set_interface_property jesd_link1_data associatedReset   reset_sink
-set_interface_property jesd_link1_data dataBitsPerSymbol 128
-set_interface_property jesd_link1_data readyLatency      0
-add_interface_port jesd_link1_data jesd_link1_data_data  data  Input  128
-add_interface_port jesd_link1_data jesd_link1_data_valid valid Input  1
-add_interface_port jesd_link1_data jesd_link1_data_ready ready Output 1
-
-# =============================================================================
 # Conduits (direction flipped relative to dac_controller_0)
+# Note: jesd_link0_data and jesd_link1_data AVST sinks were removed in
+# Stage 5 (merged); those data paths now flow to the real Intel
+# JESD204B GTS Subsystem IPs.
 # =============================================================================
 
 # jesd_link0_status: somf OUT (was IN to dac_controller_0), frame_error IN,

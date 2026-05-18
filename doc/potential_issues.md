@@ -350,3 +350,143 @@ cleanly (WNS +1.731 ns, 0 errors).
       `oobe/baseline_a55.qsf` ones on first hardware bring-up — both target
       the same dev kit but if Altera's pinout was ever revised between
       revisions, the legacy snapshot could diverge.
+
+
+---
+
+## ISSUE-014: GTS JESD204B IP on Agilex 5 ES SR0 silicon (Stage 5 merged)
+
+**Date:** 2026-05-17
+**Module:** `ip/dac_subsys/dac_subsys.qsys` (u_jesd_link0, u_jesd_link1)
+**Status:** Open — track warnings from first full compile + first hardware
+bring-up
+
+**Description:**
+Stage 5 (merged) added two `intel_jesd204b_gts` IP instances to
+`dac_subsys.qsys` for the AD9176 dual-link JESD204B transport. The IP is
+listed in Quartus 26.1 with `SUPPORTED_DEVICE_FAMILIES {{Agilex 5}
+{Agilex 3}}` and `SUPPORTED_DIE_TYPES {"MAIN_SM7*" "MAIN_SM5*" "MAIN_SM4*"
+"MAIN_FMM3*" "MAIN_FMM2*"}` per
+`D:/altera_pro/26.1/ip/altera/jesd204b_gts/src/top/j204b_gts_hw.tcl`
+line 35-36. Our target device `A5ED065BB32AE6SR0` falls within the
+supported family but ES SR0 stepping support is not explicitly enumerated
+in the IP descriptor.
+
+**Watch for:**
+- `IP_NOT_PRODUCTION_READY` warnings during quartus_ipgenerate or
+  quartus_syn (capture verbatim if seen).
+- PMA PLL lock-time anomalies during hardware bring-up.
+- Timing closure issues on the 312.5 MHz PMA datapath if ES SR0 has
+  slower speed binning than the IP wizard's nominal Fmax assumptions.
+
+**Resolution path:**
+- If warnings are benign at fit time, document them here and proceed.
+- If hardware lock fails, escalate to Altera support with the dev kit
+  ES SR0 stepping reference and a verbose quartus_sta log.
+
+**Action items:**
+- [x] First full compile (2026-05-18): 0 errors, 41 warnings; none flag
+      `IP_NOT_PRODUCTION_READY` for the GTS JESD204B IP. Timing met with
+      WNS = +1.806 ns. 222 synchronizer chains, worst-case MTBF 1e+09 yr.
+- [ ] First hardware bring-up: confirm PLL_LOCKED + LANE_READY come up
+      stable on both links.
+
+---
+
+## ISSUE-015: Cross-tile transceiver refclk routing (UX 4B GBTCLK0 -> UX 4C SERDIN lanes)
+
+**Date:** 2026-05-17
+**Module:** Agilex 5 GTS PMA, FMC SERDIN[4..7] (UX 4C bank) sourced from
+GBTCLK0 (UX 4B refclk pad)
+**Status:** Closed (Stage 5 merged, 2026-05-18) — resolved by adding GBTCLK1
+(UX 4C refclk pad, FPGA AV16/AV21) as a second refclk wired to
+u_jesd_link1. The Fitter rejected the single-refclk topology with
+`Error (175001): The Fitter cannot place 1 IPFLUXTOP_UXTOP_WRAP, which is
+within Generic Component dac_subsys_u_jesd_link1` + `Error (175006): There
+is no routing connectivity between the IPFLUXTOP_UXTOP_WRAP and
+destination pin` — confirming cross-tile refclk routing is NOT supported
+on Agilex 5 GTS. After adding GBTCLK1 the periphery placement succeeded.
+
+**Description:**
+The AD9176-FMC-EBZ feeds GBTCLK0 to FMC pin BR40 (FPGA pad AP16/AP21),
+which is on the Agilex 5 UX 4B HSST refclk pad. The 8 SERDIN lanes split
+across UX 4B (lanes 0..3 + lane 4 on BE7/BE10) and UX 4C (lanes 5..7 on
+BC/BA/AW). Whether the Agilex 5 GTS supports cross-tile PMA refclk
+routing (UX 4B refclk feeding UX 4C transceiver PLL) is undocumented in
+the Quartus 26.1 IP wizard text; in some Intel/Altera transceiver
+families this requires a dedicated refclk per tile.
+
+**Watch for:**
+- Fitter error: "transceiver reference clock cannot reach instance X" or
+  similar at first full compile.
+- Quartus 26.1 GTS IP user guide section on multi-tile refclk topology
+  (consult before debugging in fitter).
+
+**Resolution path:**
+- If cross-tile refclk works: close this issue with a one-line note.
+- If it doesn't: add a second refclk input on UX 4C. The FMC also exposes
+  `GBTCLK1_M2C` (pins B20/B21); FPGA pad assignment TBD from
+  AD9176_Dev_Pinout.txt. Add `fmc_gbtclk1_p/n` SV port + qsf pin
+  assignment + a second `u_xcvr_refclk_4c` clock_bridge inside dac_subsys
+  + route to `u_jesd_link1.pll_refclk`.
+
+**Action items:**
+- [x] First full compile: confirmed cross-tile refclk is NOT supported
+      (Error 175001/175006 on u_jesd_link1).
+- [x] Dual-refclk path implemented: GBTCLK1 -> FPGA AV16/AV21 (UX 4C),
+      `u_xcvr_refclk_4c` clock_bridge added in dac_subsys, fed to
+      `u_jesd_link1.pll_refclk`. Periphery placement passes on the second
+      full compile (2026-05-18).
+
+---
+
+## ISSUE-016: JESD204B FPGA IP for F-Tile is OpenCore Plus on this workstation
+
+**Date:** 2026-05-18
+**Module:** `ip/dac_subsys/dac_subsys.qsys` (u_jesd_link0, u_jesd_link1)
+**Status:** Open — license-server issue, not a design issue
+
+**Description:**
+First successful full Quartus build (Stage 5 merged) reported the IP
+license as `OpenCore Plus` in `output_files/agilex5_devkit.asm.rpt`:
+
+    ; Altera ; JESD204B FPGA IP for F-Tile (6AF7 018D) ; OpenCore Plus ;
+
+Consequence: the Assembler produced `agilex5_devkit_time_limited.sof`
+(4.35 MB) instead of `agilex5_devkit.sof`. The time-limited bitstream is
+fully functional on hardware but halts after the OpenCore Plus tether
+timer expires (~1 hour). Useful for first power-on and bring-up; not
+suitable for the eventual deployable artifact.
+
+The mapping "JESD204B FPGA IP for F-Tile (6AF7 018D)" is the license
+Quartus 26.1 checks for the **Agilex 5 GTS** flavour of the IP. The
+license name `JESD204B FPGA IP for F-Tile` is misleading — it covers
+both F-Tile (Agilex 7) and GTS (Agilex 5) variants under one feature
+code per the 26.1 license model.
+
+**Watch for:**
+- Time-limited bitstream behaviour on hardware: AD9176 SYNC and DAC
+  output will stop after ~1 hour. Re-flash to recover.
+- Any further IP additions that pull additional unlicensed features
+  (Signal Tap is `Licensed`; Nios V/m is `Licensed`).
+
+**Resolution path:**
+- Procure a full JESD204B FPGA IP for F-Tile license on the workstation's
+  Altera license server (FlexLM feature code per Altera licensing).
+- After licensing, the next `quartus_sh -t build.tcl` will produce
+  `agilex5_devkit.sof` directly and `build.tcl`'s SOF check will pass
+  the strict-name branch (see below).
+
+**Build.tcl accommodation:**
+`build.tcl` was updated (2026-05-18) to accept either
+`agilex5_devkit.sof` (full license) or `agilex5_devkit_time_limited.sof`
+(OpenCore Plus) and report which one was produced. Without this change
+the exit code was 1 even on otherwise-clean builds.
+
+**Action items:**
+- [ ] License-admin: add JESD204B FPGA IP for F-Tile feature to the
+      Altera license server.
+- [ ] After license refresh: re-run `quartus_sh -t build.tcl` and
+      confirm `agilex5_devkit.sof` is produced and reported.
+- [ ] First hardware bring-up: schedule for less than 1 hour of
+      continuous-bitstream time, or re-flash periodically.

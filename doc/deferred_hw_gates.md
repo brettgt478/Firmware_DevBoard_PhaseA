@@ -114,32 +114,42 @@ Each entry:
 
 ---
 
-## Stage 5 - GTS reference clock + FMC differential ports
+## Stage 5 (merged with original Stage 6) - JESD204B GTS Subsystem integration
 
-### Stage 5 verify: fitter places SERDIN lanes across UX 4B + 4C
+### Stage 5 verify 1: fitter places SERDIN lanes across UX 4B + 4C
 
 - **What was deferred**: physical verification that the placed lanes route
   cleanly; signal integrity of the FMC mezzanine connection.
 - **Why deferred**: fit-report-only verification is software-side; SI is HW.
 - **Software substitute**: `flow.rpt` placement confirms UX 4B / UX 4C
-  bank assignments. Stage 6 risk note tracks the cross-tile GBTCLK0 issue.
+  bank assignments. Cross-tile GBTCLK0 routing risk tracked in
+  [potential_issues.md ISSUE-014](potential_issues.md).
 - **Unblock when**: hardware available, eye-diagram capture taken at AD9176
   receiver pins, BER measured per JESD204B Annex G.
 
----
+### Stage 5 verify 2: System-Console JESD CSR readback + AD9176 link bring-up
 
-## Stage 6 - JESD204B GTS Subsystem integration
+- **What was deferred**: System Console (or `devmem` via Linux) access to
+  the GTS JESD204B CSRs at `0x0200_2000` (link 0) and `0x0200_3000`
+  (link 1); PLL_LOCKED, LANE_READY, FRAME_READY readback; AD9176 SPI
+  bring-up sequence; SYNC release.
+- **Why deferred**: hardware (AD9176-FMC-EBZ + dev kit + scope).
+- **Software substitute**: Stage 8 `dac_subsys_tb.sv` will substitute a
+  JESD GTS BFM that asserts PLL_LOCKED etc. and verifies CSR decode paths
+  in simulation.
+- **Unblock when**: hardware available + dev kit JTAG reachable via
+  USB-Blaster. See [integration.md Procedure 5.A](integration.md#procedure-5a--jesd-link-bring-up--first-sine-wave-on-ad9176-rf-out).
 
-### Stage 6 verify: System-Console JESD CSR readback + AD9176 link bring-up
+### Stage 5 verify 3: Subclass-1 deterministic latency
 
-- **What was deferred**: NiosV JTAG-to-Avalon access from System Console;
-  PLL_LOCKED, LANE_READY, FRAME_READY readback; AD9176 SPI config from
-  scripts.
-- **Why deferred**: hardware.
-- **Software substitute**: Stage 8 `dac_subsys_tb.sv` substitutes a
-  JESD GTS BFM that asserts PLL_LOCKED etc. and verifies CSR decode paths.
-- **Unblock when**: hardware available + System Console reachable over USB
-  Blaster (or equivalent).
+- **What was deferred**: confirmation that the AD9176-FMC-EBZ
+  SYSREF/GBTCLK0 phasing meets subclass-1 source-sync timing.
+- **Why deferred**: hardware-only (scope + AD9176 board strap inspection).
+- **Software substitute**: none (subclass-1 latency is a board-level
+  property). If subclass-1 doesn't lock at bring-up, drop to subclass-0
+  via the GTS IP's runtime `SUBCLASSV` CSR write.
+- **Unblock when**: hardware bring-up Procedure 5.A succeeds + scope
+  measurement confirms SYSREF leading-edge phasing matches GBTCLK0.
 
 ---
 

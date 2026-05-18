@@ -31,14 +31,18 @@ agilex5_devkit (top)
     ├── u_niosv_subsys      — JTAG-to-Avalon master (extended to reach dac_subsys)
     └── u_dac_subsys        ← NEW
         ├── u_dac_controller_0    — Phase A IP (NCO, JESD transport, sync, FIFO, regs)
-        ├── u_jesd204b_gts_ss     — Intel JESD204B GTS Subsystem, mode 4, 2 links × 4 lanes (Stage 6)
-        ├── u_jesd_stub           — Phase B synthesis-only terminator (Stages 3-5; deleted in Stage 6)
+        ├── u_jesd_link0          — Intel JESD204B GTS Subsystem, link 0 (L=4, M=4, 12.5 Gbps) (Stage 5 merged)
+        ├── u_jesd_link1          — Intel JESD204B GTS Subsystem, link 1 (L=4, M=4, 12.5 Gbps) (Stage 5 merged)
+        ├── u_jesd_stub           — Non-data JESD conduit terminator (status/refclk/csr/pio/tx_enbl;
+        │                            no native GTS-IP equivalent; can be deleted once dac_controller_0
+        │                            is redesigned to drop those legacy Phase A conduits)
+        ├── u_xcvr_refclk         — Transceiver refclk bridge (GBTCLK0, 312.5 MHz) (Stage 5 merged)
         ├── u_spi_master          — Avalon-MM SPI Master to AD9176 (2 CS, 25 MHz, 24-bit)
         ├── u_tx_en_pio           — 2-bit output PIO → FMC_TXEN_0/1
         ├── u_pe_ctrl_pio         — 1-bit output PIO → FMC_PE_CTRL
         ├── u_spi_en_pio          — 1-bit output PIO → FMC_SPI_EN (Stage 4)
         ├── u_pg_c2m_pio          — 1-bit output PIO (dangling externally — MAX10 owns FMC PG_C2M; HPS-readable diagnostic)
-        └── u_dac_status_pio      — 32-bit input PIO ← FMC PRSNT_N + JESD status (Stage 6)
+        └── u_dac_status_pio      — 32-bit input PIO ← FMC PRSNT_N + fmc_ready (Stage 5 merged) + JESD status (later stage)
 ```
 
 ### Clock domains
@@ -48,9 +52,9 @@ agilex5_devkit (top)
 | `pll_refclk_100` | 100 MHz | dev-kit oscillator (PIN_BK109) |
 | `system_clock` | 100 MHz | shell `u_sys_pll` → fabric main clock |
 | `clock_sink_clk` (= `system_clock`) | 100 MHz | drives `dac_controller_0` control plane + Avalon-MM CSRs |
-| `jesd204_tx_link_clk_clk` | ~250 MHz | from JESD204B GTS Subsystem link layer |
-| `fmc_gbtclk0` | AD9176 device clock | FMC `GBTCLK0_M2C` (D4/D5) — GTS PLL reference |
-| `fmc_sysref` | low rate, divides DEV_CLK | FMC `LA00_CC` (G6/G7), captured to `jesd204_tx_link_clk` |
+| `jesd204_tx_link_clk_clk` | 312.5 MHz | u_jesd_link0.txphy_clk[0] looped at top SV → drives both u_jesd_link0 and u_jesd_link1 txlink_clk |
+| `fmc_gbtclk0` | 312.5 MHz (AD9176 device clock) | FMC `GBTCLK0_M2C` (D4/D5) — GTS PMA PLL refclk (×40 = 12.5 Gbps lane rate) |
+| `fmc_sysref` | low rate, divides DEV_CLK | FMC `LA00_CC` (G6/G7), captured to `jesd204_tx_link_clk` via [src/sysref_capture.vhd](projects/agilex5_devkit/src/sysref_capture.vhd) |
 
 ### Address map (LWS2F window, HPS view)
 
@@ -61,10 +65,11 @@ agilex5_devkit (top)
 | └ `u_spi_master` | `0x0200_1000` | 64 B | Avalon-MM SPI Master CSR |
 | └ `u_tx_en_pio` | `0x0200_1100` | 16 B | TXEN_0/1 |
 | └ `u_pe_ctrl_pio` | `0x0200_1110` | 16 B | PE_CTRL |
-| └ `u_dac_status_pio` | `0x0200_1120` | 16 B | PRSNT_N (bit 0), PG_C2M loopback (bit 2), JESD status (bits 31:5 Stage 6) |
+| └ `u_dac_status_pio` | `0x0200_1120` | 16 B | PRSNT_N (bit 0), PG_C2M loopback (bit 2), fmc_ready (bit 5, Stage 5 merged), JESD status (bits 31:6 future) |
 | └ `u_spi_en_pio` | `0x0200_1130` | 16 B | FMC SPI level-shifter enable (Stage 4) |
 | └ `u_pg_c2m_pio` | `0x0200_1140` | 16 B | PG_C2M PIO (dangling — see [doc/potential_issues.md ISSUE-012](doc/potential_issues.md)) |
-| └ `u_jesd204b_gts_ss` | `0x0200_2000` | 8 KB | JESD GTS Subsystem CSR (Stage 6) |
+| └ `u_jesd_link0` | `0x0200_2000` | 4 KB | JESD204B GTS link 0 CSR (Stage 5 merged) |
+| └ `u_jesd_link1` | `0x0200_3000` | 4 KB | JESD204B GTS link 1 CSR (Stage 5 merged) |
 
 The NiosV JTAG-to-Avalon master path to `axi_csr` is deferred to Stage 6 alongside GTS bring-up — Stage 4's `devmem` over LWH2F is the primary CSR access path.
 
@@ -74,11 +79,12 @@ FPGA package pins are recovered from the user-annotated [AD9176_Dev_Pinout.txt](
 
 | Signal group | FMC connector | FPGA pin | FPGA bank | IO standard |
 |--------------|---------------|----------|-----------|-------------|
-| `fmc_serdin_tx[7:0]_p/n` | FMC_TX0..TX7 | AU/AR/AN/AL/BE/BC/BA/AW + 7/10 | UX 4B / 4C | HSST (Stage 5) |
-| `fmc_gbtclk0_p/n` | D4/D5 (BR40) | AP16/AP21 | UX 4B | LVPECL (Stage 5) |
-| `fmc_sysref_p/n` | G6/G7 (LA00_CC) | A45/B42 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
-| `fmc_sync0_p/n` | D8/D9 (LA01_CC) | B45/A48 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
-| `fmc_sync1_p/n` | H7/H8 (LA02) | B51/A51 | HSIO 3B | LVDS, 1.2 V (Stage 5) |
+| `fmc_serdin_tx[7:0]_p/n` (output) | FMC_TX0..TX7 | AU/AR/AN/AL/BE/BC/BA/AW + 7/10 | UX 4B / 4C | HSST (Stage 5 merged ✓) |
+| `fmc_gbtclk0_p/n` (input) | D4/D5 (BR40) | AP16/AP21 | UX 4B | HSST refclk pad → u_jesd_link0 (Stage 5 merged ✓) |
+| `fmc_gbtclk1_p/n` (input) | B20/B21 (BR40_EXT) | AV16/AV21 | UX 4C | HSST refclk pad → u_jesd_link1; needed because Agilex 5 GTS can't route a refclk across transceiver tiles (Stage 5 merged ✓) |
+| `fmc_sysref` (input, LVDS_RX inferred) | G6/G7 (LA00_CC) | A45/B42 | HSIO 3B | "1.2-V TRUE DIFFERENTIAL SIGNALING" (Stage 5 merged ✓) |
+| `fmc_sync0` (input — AD9176 drives, FPGA samples) | D8/D9 (LA01_CC) | B45/A48 | HSIO 3B | "1.2-V TRUE DIFFERENTIAL SIGNALING" (Stage 5 merged ✓) |
+| `fmc_sync1` (input — AD9176 drives, FPGA samples) | H7/H8 (LA02) | B51/A51 | HSIO 3B | "1.2-V TRUE DIFFERENTIAL SIGNALING" (Stage 5 merged ✓) |
 | `fmc_spi_sck` | G9 (LA03_P) | **A54** | HSIO 3B | 1.2-V (Stage 4 ✓) |
 | `fmc_spi_mosi` | G10 (LA03_N) | **B54** | HSIO 3B | 1.2-V (Stage 4 ✓) |
 | `fmc_spi_miso` | H10 (LA04_P) | **A63** | HSIO 3B | 1.2-V (Stage 4 ✓) |

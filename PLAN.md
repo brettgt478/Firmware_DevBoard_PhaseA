@@ -514,9 +514,84 @@ See [doc/integration.md Procedure 4.A](doc/integration.md#procedure-4a--fmc-spi-
 
 ---
 
-## Stage 5 — Add GTS reference clock + FMC differential ports (no JESD IP yet)
+## Stage 5 (merged with original Stage 6) — JESD204B GTS Subsystem integration + FMC differential ports
 
-**Goal.** Fitter accepts GBTCLK0 as a transceiver reference clock; all JESD-related diff pairs are placed; SDC declares clock and timing relationships.
+**Status.** Implemented. Stage 5 and the original Stage 6 were merged because Agilex 5 GTS transceiver pins (GBTCLK0 refclk + 8 SERDIN lanes) cannot legally be placed without a transceiver-aware IP consuming them — there was no smaller stage that produced a clean fitter run. See [doc/integration.md Stage 5](doc/integration.md#stage-5) for the hardware bring-up procedure.
+
+**Implementation deviations from the merged plan:**
+- **Two GTS IP instances** (`u_jesd_link0`, `u_jesd_link1`), one per JESD link, each `L=4` lanes. (The IP's `L_2`/`M_2` parameter pairs are for "dual simplex" mode on shared lanes, not for two independent links.)
+- **`u_jesd_stub` retained**, trimmed to terminate only the non-data conduits of `u_dac_controller_0` (status/refclk/csr/pio/tx_enbl); the two AVST data paths now go to the real GTS IPs. Full jesd_stub deletion is deferred to a later stage that redesigns `dac_controller_0_hw.tcl` to drop those legacy Phase A conduits.
+- **SYNC_N direction**: AD9176 drives SYNC_N to the FPGA (per JESD204B spec; the GTS IP's `jesd204_tx_sync_n` is an input — confirmed from `D:/altera_pro/26.1/.../j204b_gts_ports.csv` line 21). CLAUDE.md §2 FMC pin table and `agilex5_devkit.sv` updated accordingly (input, not output).
+- **LVDS pin naming**: HSIO 3B LVDS inputs (SYSREF, SYNC0, SYNC1) declared as single-ended `_p` ports in RTL with the `_n` pin assignment via the qsf `"name(n)"` syntax; HSST transceiver pairs (GBTCLK0, SERDIN[7:0]) declared as explicit `_p`/`_n` in RTL.
+- **txphy_clk loopback**: `u_jesd_link0.txphy_clk[0]` (312.5 MHz, from PMA) is routed out via the `dac_txphy_clk_out` conduit, looped at the top SV through `wire jesd_link_clk`, and fed back into `dac_subsys.jesd_tx_link_clk` (sink). Both GTS IPs share this link clock so the AVST data path is isomorphic across links.
+
+### Files modified
+
+| Action | Path | Notes |
+|--------|------|-------|
+| edit | [ip/dac_subsys/dac_subsys.tcl](ip/dac_subsys/dac_subsys.tcl) | + u_xcvr_refclk, u_jesd_link0, u_jesd_link1, u_rst_bridge_axi_n, u_rst_bridge_jesd_n; bump u_clk_bridge_jesd to 312.5 MHz; export 11 new external interfaces |
+| edit | [ip/jesd_stub/jesd_stub_hw.tcl](ip/jesd_stub/jesd_stub_hw.tcl) + [src/jesd_stub.vhd](ip/jesd_stub/src/jesd_stub.vhd) | drop jesd_link0_data + jesd_link1_data AVST sinks (now in GTS IPs); keep all conduits |
+| edit | [projects/agilex5_devkit/baseline_top_phaseb_patches.tcl](projects/agilex5_devkit/baseline_top_phaseb_patches.tcl) | drop placeholder system_clock→jesd_tx_link_clk; export new JESD conduits/clocks/resets |
+| edit | [projects/agilex5_devkit/agilex5_devkit.sv](projects/agilex5_devkit/agilex5_devkit.sv) | + 12 top-level ports (1 LVDS sysref, 2 LVDS sync, 2 HSST refclk, 16 HSST serdin); instantiate u_fmc_handshake + u_sysref_capture; wire txphy_clk loopback |
+| edit | [projects/agilex5_devkit/agilex5_devkit.qsf](projects/agilex5_devkit/agilex5_devkit.qsf) | + 24 pin assignments + 3 LVDS IO_STANDARD; + new RTL/SDC global_assignments |
+| create | [projects/agilex5_devkit/sdc/fmc_io.sdc](projects/agilex5_devkit/sdc/fmc_io.sdc) | fmc_gbtclk0 create_clock @ 3.200 ns (312.5 MHz); false-path SYSREF + SYNC |
+| create | [projects/agilex5_devkit/sdc/jesd_cdc.sdc](projects/agilex5_devkit/sdc/jesd_cdc.sdc) | async clock-groups AXI ↔ JESD link, GBTCLK ↔ AXI |
+| create | [projects/agilex5_devkit/src/sysref_capture.vhd](projects/agilex5_devkit/src/sysref_capture.vhd) | LVDS_RX inferred + 2-stage sync to jesd_tx_link_clk |
+| create | [projects/agilex5_devkit/src/fmc_handshake.sv](projects/agilex5_devkit/src/fmc_handshake.sv) | 2-stage sync on prsnt_n + pg_m2c + 32-cycle hold-off → fmc_ready (gates JESD reset; CLAUDE.md §6 #4) |
+| create | [ip/dac_controller_0/dac_controller_0.ipx](ip/dac_controller_0/dac_controller_0.ipx) | defensive IP catalog index after intermittent IP_SEARCH_PATHS issues with both GTS IPs added to the same system |
+
+### JESD parameters (mode-4)
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `JESDV` | 1 | JESD204B |
+| `SUBCLASSV` | 1 | source-sync SYSREF deterministic latency |
+| `L` (lanes per link) | 4 | each IP carries 4 lanes; 2 IPs → 8 lanes total |
+| `M` (converters per link) | 4 | mode-4 |
+| `F` (octets per frame) | 2 | |
+| `S` (samples per frame) | 1 | |
+| `N` / `N_PRIME` | 16 / 16 | |
+| `K` (frames per multiframe) | 32 | |
+| `HD` | 1 | high density |
+| `SCR` | 1 | scrambling enabled |
+| `CS` / `CF` | 0 / 0 | no control bits/words |
+| `lane_rate` | 12500.0 Mbps | 12.5 Gbps |
+| `d_refclk_freq` | 312.5 MHz | GBTCLK0 (PMA PLL ×40 = lane rate) |
+| `clocking_mode` | PMA | transceiver parallel clock; no separate System PLL |
+| `wrapper_opt` | base_phy | both data link + PHY layers |
+| `DID` | 0 (link 0), 1 (link 1) | per-link device ID |
+| `LID0..LID3` | 0..3 (link 0), 4..7 (link 1) | per-lane logical IDs |
+
+**Lane rate math sanity check**: For M=4, L=4, NP=16 mode 4, per-lane bit rate = (M × NP × fs × 10) / (L × 8) = 20·fs. At 12.5 Gbps lane rate, per-converter Fs = 625 MSPS → post-4× interpolation DAC sample rate = 2.5 GSPS, within AD9176 12.6 GSPS max. The "385 MSPS channel data rate" in the AD9176 datasheet doesn't directly map to 625 MSPS — they're different reference points (datasheet "channel" vs JESD "per-converter Fs") and worth re-checking against the AD9176 mode-4 table.
+
+### Pin assignments (FPGA package pins, from `AD9176_Dev_Pinout.txt`)
+
+| Port | FPGA pin | FMC connector | IO standard |
+|------|----------|---------------|-------------|
+| `fmc_gbtclk0_p/n` | AP16 / AP21 | D4 / D5 (BR40) | (HSST refclk pad, set by GTS IP) |
+| `fmc_sysref` (+ "(n)") | A45 / B42 | G6 / G7 (LA00_CC) | "1.2-V TRUE DIFFERENTIAL SIGNALING" |
+| `fmc_sync0` (+ "(n)") | B45 / A48 | D8 / D9 (LA01_CC) | "1.2-V TRUE DIFFERENTIAL SIGNALING" |
+| `fmc_sync1` (+ "(n)") | B51 / A51 | H7 / H8 (LA02) | "1.2-V TRUE DIFFERENTIAL SIGNALING" |
+| `fmc_serdin_tx_p[0]/n[0]` (→ link0) | AU7 / AU10 | FMC_TX0 (SERDIN7) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[1]/n[1]` (→ link0) | AR7 / AR10 | FMC_TX1 (SERDIN6) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[2]/n[2]` (→ link0) | AN7 / AN10 | FMC_TX2 (SERDIN5) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[3]/n[3]` (→ link0) | AL7 / AL10 | FMC_TX3 (SERDIN4) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[4]/n[4]` (→ link1) | BE7 / BE10 | FMC_TX4 (SERDIN2) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[5]/n[5]` (→ link1) | BC7 / BC10 | FMC_TX5 (SERDIN0) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[6]/n[6]` (→ link1) | BA7 / BA10 | FMC_TX6 (SERDIN1) | (HSST, set by GTS IP) |
+| `fmc_serdin_tx_p[7]/n[7]` (→ link1) | AW7 / AW10 | FMC_TX7 (SERDIN3) | (HSST, set by GTS IP) |
+
+### Verification
+
+- `quartus_sh -t build.tcl --project-only` clean (qsys regen of dac_subsys.qsys + baseline_top.qsys with the two GTS IPs).
+- Full `quartus_sh -t build.tcl` clean, .sof produced, WNS ≥ 0.5 ns.
+- Hardware bring-up procedure → [doc/integration.md Stage 5](doc/integration.md#stage-5).
+
+### Stage 5 (merged) original-plan content (kept here for archive)
+
+**Original Stage 5 goal.** Fitter accepts GBTCLK0 as a transceiver reference clock; all JESD-related diff pairs are placed; SDC declares clock and timing relationships.
+
+(This was the original plan before merging with Stage 6; Stage 5 was found to be non-viable standalone because GTS pins require a transceiver-aware IP consumer. Kept here to preserve plan history.)
 
 ### Files modified
 
@@ -598,7 +673,11 @@ set_false_path -from * -to [get_ports fmc_sync1_p]
 
 ---
 
-## Stage 6 — Add JESD204B GTS Subsystem IP and integrate
+## Stage 6 — (merged into Stage 5 above)
+
+**Status.** This stage was rolled into Stage 5 because the original Stage-5-only scope (GBTCLK + SERDIN pin placeholders) was not buildable on Agilex 5 without an active GTS IP consumer. The original Stage 6 plan is preserved below for archival purposes; the actually-implemented combined work is documented in the Stage 5 (merged) section above.
+
+### Original Stage 6 goal (now part of Stage 5 merged)
 
 **Goal.** Fully wired RTL system that can light up JESD links once hardware is configured.
 
