@@ -615,6 +615,88 @@ suffices).
 
 ---
 
+## Stage 8 -- System simulation
+
+**PLAN reference:** [PLAN.md Stage 8](../PLAN.md#stage-8--system-simulation)
+
+**Status:** Stage 8a complete (block-level regression runs clean under
+Questa Altera Starter FPGA Edition); 8b and 8c pending.
+
+**What got deferred:**
+
+- **Integration TB against the real JESD204B GTS IP** (Stage 8b). Will
+  be attempted next; see Procedure 8.B once written.
+- **BFM substitution fallback** (Stage 8c). Only invoked if 8b cannot
+  drive the GTS IP from a SystemVerilog testbench.
+- **Hardware-driven regression** -- block TBs are software-only; the
+  end-to-end check stays in Procedure 5.A / 7.A.
+
+### Procedure 8.A -- Block-level regression on Questa
+
+**Goal.** Confirm all 8 Phase A block testbenches compile and pass on
+the Phase B workstation. This is the same Stage 1 gate from Phase A,
+re-validated for Phase B's toolchain.
+
+**Hardware required:** None. Pure software.
+
+**Steps:**
+
+```sh
+# From repo root, with Questa Altera Starter on PATH.
+# Quartus Pro 26.1 ships it at:
+#   D:/altera_pro/26.1/questa_fse/win64/
+# (on Linux: <install>/questa_fse/linux64/)
+
+export PATH=/d/altera_pro/26.1/questa_fse/win64:$PATH
+vsim -c -do "do tb/run_block_tbs.tcl; quit -f"
+```
+
+**Pass criterion:**
+- `run_block_tbs: summary` reports `TBs run: 8 / TBs failed: 0`.
+- Last line printed: `Stage 1 block-tb gate: PASS` and exit code 0.
+
+**Failure path:**
+- `(vcom-1441) Process(ALL) is not defined for this version of the
+  language` -- VHDL-2008 not enabled. Phase A RTL uses `process(all)`.
+  Confirm `tb/run_block_tbs.tcl` calls `vcom -2008` (it should --
+  this is a regression test for the script itself).
+- License errors at `vsim` start: Questa Altera Starter requires a
+  Quartus license on the same license server. Confirm
+  `SALT_LICENSE_SERVER` is set.
+- Specific TB fails: capture the `** Error:` line(s) from the
+  transcript and file in [potential_issues.md](potential_issues.md).
+  Phase A's TB idiom uses `severity error` for `** Error:
+  SIMULATION PASSED` (intentional, for visibility); look at the
+  `TBs failed` count in the summary line, not the raw Errors count.
+
+### Procedure 8.B -- License probe (diagnostic, on-demand)
+
+**Goal.** Verify the JESD204B GTS IP simulation models compile under
+Questa without an additional license. Useful when the toolchain
+version changes or when bringing a new workstation online.
+
+**Hardware required:** None.
+
+**Steps:**
+
+```sh
+cd projects/agilex5_devkit/sim
+vsim -c -do probe_license.do
+```
+
+**Pass criterion:** Final line of transcript reads
+`== probe_license.do: PROBE_PASS (all libs + IP compiled) ==`
+and exit code 0.
+
+**Failure path:**
+- `PROBE_FAIL: com -- ... vcom failed` with `(vcom-1441) Process(ALL)`:
+  same as 8.A; -2008 flag missing.
+- `PROBE_FAIL` with `License (FlexLM-...)`: the workstation's Altera
+  license server does not include the simulation feature; contact
+  license admin.
+
+---
+
 ## Stage 7 -- ad9176-config user-space tool & full Linux-driven bring-up
 
 **PLAN reference:** [PLAN.md Stage 7](../PLAN.md#stage-7--ad9176-config-user-space-tool--full-bring-up)

@@ -196,6 +196,43 @@ Each entry:
 
 ---
 
+## Stage 8 - System simulation
+
+### Stage 8a -- block testbench regression
+
+- **What was deferred**: nothing -- Stage 8a runs entirely on the
+  Phase B workstation.
+- **Status:** COMPLETE (2026-05-20). All 8 Phase A block testbenches
+  pass under Questa Altera Starter FPGA Edition (the simulator
+  bundled with Quartus Pro 26.1). VHDL-2008 enabled via the
+  `tb/run_block_tbs.tcl` script's `vcom -2008` flag.
+- **Re-run procedure**: see
+  [integration.md Procedure 8.A](integration.md#procedure-8a----block-level-regression-on-questa).
+- **License probe**: see
+  [integration.md Procedure 8.B](integration.md#procedure-8b----license-probe-diagnostic-on-demand).
+
+### Stage 8b -- integration TB against the real JESD204B GTS IP (pending)
+
+- **What was deferred**: writing `dac_subsys_tb.sv` that drives the
+  real GTS IP (no BFM substitution) over the LWS2F path using the
+  HPS AXI BFM, and asserting JESD link-up / golden-sample comparison.
+- **Why deferred**: queued as the next sub-stage; needs probe
+  evidence from 8a before scoping the work. 8a probe is now PASS.
+- **Software substitute**: 8a confirms the GTS IP simulation models
+  compile cleanly; nothing else available until 8b is written.
+- **Unblock when**: 8b is scheduled. License is not a blocker.
+
+### Stage 8c -- BFM substitution fallback (conditional)
+
+- **What was deferred**: if 8b cannot drive the GTS IP in TB context
+  (model size, run-time, encrypted-model debug visibility, etc.),
+  swap to an Intel JESD GTS BFM in TX mode for the link layer.
+- **Why deferred**: 8c is conditional on 8b's outcome.
+- **Software substitute**: n/a.
+- **Unblock when**: 8b explicitly fails or hits unacceptable runtime.
+
+---
+
 ## Stage 9 - Hygiene & doc finalization
 
 ### Stage 9 hygiene: README.md rewrite

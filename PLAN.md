@@ -879,6 +879,13 @@ ad9176-config
 
 ## Stage 8 — System simulation
 
+**Status:** 8a complete (2026-05-20). Block-level regression of all 8
+Phase A testbenches runs clean under Questa Altera Starter FPGA
+Edition (the simulator bundled with Quartus Pro 26.1). License probe
+confirms the JESD204B GTS IP simulation models compile without
+additional licensing. 8b (integration TB against the real GTS IP)
+and 8c (BFM substitution if 8b walls out) pending.
+
 **Goal.** Regression-grade simulation that exercises the integrated system. Each new RTL change runs `vsim -c -do "do run_sim.tcl; quit -f"` and gets a pass/fail in under 10 minutes.
 
 ### Files created or modified
