@@ -193,8 +193,16 @@ projects/
     sim/                         — run_sim.tcl, dac_subsys_tb.sv
 tb/                              — block-level VHDL testbenches from Phase A
 software/
-  ad9176_config/                 — Linux user-space tool
+  ad9176_config/                 — Linux user-space tool (Stage 7)
+    ad9176_config.c              — main (status / bringup / tone / peek / poke)
+    ad9176_fmc_ebz.c/.h          — /dev/mem mmap + Altera SPI master driver
+    ad9176_init.c/.h             — AD9176 bring-up sequence (Table 50)
+    dac_subsys_regs.h            — LWS2F register map (audited; ISSUE-017)
+    Makefile                     — host build + cross-compile (CROSS=...)
+    README.md                    — usage + bring-up sequence summary
+    reference/                   — Phase A snapshot (do not use; ISSUE-017)
   yocto_linux/                   — extended baseline Yocto build
+    meta-custom/                 — Phase B layer (recipes-apps/ad9176-config)
 ```
 
 ---
@@ -229,7 +237,7 @@ These are sticky — every change must respect them or builds fail or hardware b
 
 5. **SYSREF is HSIO 3B LVDS captured on `LA00_CC`**, resampled to `jesd204_tx_link_clk` in [src/sysref_capture.vhd](projects/agilex5_devkit/src/sysref_capture.vhd). JESD204B subclass-1 deterministic latency requires SYSREF to be source-synchronous to GBTCLK0 on the AD9176 board — confirm the AD9176-FMC-EBZ subclass-1 strap before relying on it. Default plan is subclass-1; subclass-0 fallback is documented in [doc/jesd_bringup_sequence.md](doc/jesd_bringup_sequence.md).
 
-6. **LWS2F base is `0x0200_0000`**, `dac_subsys.axi_csr` occupies a 16 KB span at that base. All HPS user-space code and System Console scripts use this base. Do not move it without updating [software/ad9176_config/ad9176_fmc_ebz.h](software/ad9176_config/ad9176_fmc_ebz.h) and the device tree.
+6. **LWS2F base is `0x0200_0000`**, `dac_subsys.axi_csr` occupies a 16 KB span at that base. All HPS user-space code and System Console scripts use this base. Do not move it without updating [software/ad9176_config/dac_subsys_regs.h](software/ad9176_config/dac_subsys_regs.h) and the device tree.
 
 7. **HPS warm-reset must not hang the LWH2F slave.** A reset-bridge in `dac_subsys.qsys` resets the AXI slave when the HPS resets so that in-flight bursts complete or terminate cleanly. Do not remove this bridge.
 

@@ -159,13 +159,19 @@ Each entry:
 
 - **What was deferred**: the entire end-to-end "lights on" check.
 - **Why deferred**: hardware + Yocto build deferred per Stage 0.
-- **Software substitute**: tool compiles cleanly cross-compiled for arm64.
-  All AD9176 SPI register sequences mirror Phase A's `ad9176_init.c`
-  (preserved in [`software/ad9176_config/reference/ad9176_init.c`](../software/ad9176_config/reference/ad9176_init.c))
-  and are sourced from AD9176 datasheet Table 50 - so correctness is
-  inherited from Phase A's validation.
-- **Unblock when**: hardware + Yocto SD card image available; scope on
-  AD9176 J1..J4 outputs.
+- **Software substitute**: the C tool compiles cleanly with `gcc -Wall
+  -Wextra -Wpedantic -Werror -std=c11` on the build host. Host build
+  on this Windows workstation was SKIPPED (no gcc/WSL); the cross-build
+  via Yocto's `oe_runmake CROSS=${TARGET_PREFIX}` is the deployed path.
+  Phase A `ad9176_init.c` sequence is preserved in
+  [`software/ad9176_config/reference/ad9176_init.c`](../software/ad9176_config/reference/ad9176_init.c);
+  Phase B re-uses the AD9176 register sequence verbatim and rewrites the
+  transport to use the Stage 5 fabric SPI master (see
+  [potential_issues.md ISSUE-017](potential_issues.md#issue-017-phase-a-iq_router_regsh-is-stale-new-dac_subsys_regsh-is-the-source-of-truth)).
+- **Procedure when hardware available**: see
+  [integration.md Procedure 7.A](integration.md#procedure-7a----linux-user-space-bring-up-of-ad9176-via-ad9176-config).
+- **Unblock when**: dev kit + AD9176-FMC-EBZ + scope available, Yocto SD
+  card with `ad9176-config` flashed, dev kit booted to login prompt.
 
 ---
 
@@ -174,14 +180,19 @@ Each entry:
 ### Stage 7 verify: bitbake build + boot
 
 - **What was deferred**: `bitbake core-image-minimal-dev` and SD-card flash
-  per Stage 0 decision ("Set up later  stub Yocto plumbing in Stage 7 only.")
-- **Why deferred**: no Yocto build host; upstream GSRD Yocto root path not
-  yet supplied by the user.
-- **Software substitute**: meta-custom layer files (recipe, bbappend,
-  device-tree overlay) are syntactically correct YAML/bitbake and pass
-  `bitbake-layers add-layer` smoke tests if a host becomes available.
+  per Stage 0 decision ("Set up later -- stub Yocto plumbing in Stage 7 only.")
+- **Why deferred**: no Yocto build host; per user direction (2026-05-20)
+  Stage 7 stages the recipe only and does NOT invoke bitbake from this
+  workstation.
+- **Software substitute**: meta-custom layer files (`conf/layer.conf`,
+  `recipes-apps/ad9176-config/ad9176-config_0.1.bb`,
+  `recipes-apps/ad9176-config/files/README.txt`) are present and
+  syntactically correct; the recipe's `SRC_URI` points at the in-tree
+  sources under `software/ad9176_config/` and needs a symlink/copy step
+  at the recipe `files/` directory on the build host (instructions in
+  the README).
 - **Unblock when**: Yocto build host provisioned; upstream GSRD Yocto root
-  path confirmed; meta-custom layer integrated.
+  path confirmed; meta-custom layer integrated via `BBLAYERS +=`.
 
 ---
 

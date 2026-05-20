@@ -798,6 +798,9 @@ quartus_sh -t build.tcl
 
 ## Stage 7 — `ad9176-config` user-space tool & full bring-up
 
+**Status:** Software-side complete (2026-05-20, commit forthcoming).
+Hardware bring-up gate -> see [doc/integration.md](doc/integration.md) Procedure 7.A.
+
 **Goal.** Linux user-space program drives full AD9176 + JESD bring-up. Scope shows sine wave on the AD9176 RF output.
 
 ### Files created or modified

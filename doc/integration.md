@@ -615,6 +615,106 @@ suffices).
 
 ---
 
+## Stage 7 -- ad9176-config user-space tool & full Linux-driven bring-up
+
+**PLAN reference:** [PLAN.md Stage 7](../PLAN.md#stage-7--ad9176-config-user-space-tool--full-bring-up)
+
+**What got deferred:**
+
+- **Bench bring-up itself** -- needs the dev kit booted to Linux on the
+  Yocto image with `ad9176-config` installed (see Procedure 7.A).
+  Cross-ref: [deferred_hw_gates.md](deferred_hw_gates.md) Stage 7 entry.
+- **Yocto build** -- the recipe at
+  `software/yocto_linux/meta-custom/recipes-apps/ad9176-config/` is
+  not invoked from the firmware workstation. Build host steps are in
+  the Procedure.
+- **Scope verification of the AD9176 RF output** -- needs >=1 GHz BW
+  scope on J1..J4; see Procedure 7.A pass criterion.
+
+### Procedure 7.A -- Linux user-space bring-up of AD9176 via ad9176-config
+
+**Goal.** Boot the dev kit into Yocto, run `ad9176-config bringup`, and
+confirm the AD9176 emits the configured sine wave on at least one RF
+output. This is the deployable-flow analogue of Procedure 5.A (which
+uses System Console over JTAG).
+
+**Hardware required:**
+
+- Same as Procedure 5.A (dev kit + AD9176-FMC-EBZ at VADJ=1.2 V + HMC7044
+  configured + scope on J1).
+- SD card flashed with the Yocto image that includes `ad9176-config`
+  (bitbake step below).
+- Serial console (J5 micro-USB on the dev kit) or SSH into the booted
+  HPS over the Ethernet management port.
+
+**Build host steps (one-time, on a Linux workstation with Yocto set up):**
+
+```sh
+cd software/yocto_linux/meta-custom/recipes-apps/ad9176-config/files/
+# Symlink or copy the C sources from software/ad9176_config/ per
+# files/README.txt.  Then back up to the Yocto build root:
+cd ../../../../..
+# Append meta-custom to BBLAYERS, then:
+bitbake ad9176-config
+# Or rebuild the dev-kit image with ad9176-config included:
+bitbake core-image-minimal-dev
+```
+
+**Steps (on the dev kit, post-boot):**
+
+1. Flash the FPGA: either `quartus_pgm -m jtag -o "p;agilex5_devkit.sof"`
+   (or `_time_limited.sof` per
+   [potential_issues.md ISSUE-016](potential_issues.md#issue-016-jesd204b-fpga-ip-for-f-tile-is-opencore-plus-on-this-workstation))
+   OR boot U-Boot which loads `core.rbf` from the SD card.
+2. Log in to Yocto (root by default on the GSRD baseline). Confirm
+   `ad9176-config --help` runs.
+3. Quick gate before bring-up:
+   ```sh
+   ad9176-config status
+   ```
+   Expected: `fmc_ready=1`; `prsnt_n=0`; jesd_sync_status txlink=0x0 /
+   grp=0x0 / lmfc=0 (no link yet).
+4. Run the full bring-up:
+   ```sh
+   ad9176-config bringup --freq 10000000 --fs 625000000
+   ```
+   Expected output:
+   - `fmc_ready asserted`
+   - `AD9176 chip_type=0x04 prod_id=0x9176`
+   - `AD9176 DAC PLL status=0x??` (datasheet bit 0 = LOCK)
+   - `JESD sync OK (status=0x????????)` with `txlink=0xF grp=0x3 lmfc=1`
+   - `SineWaveGen: f=10000000 Hz fs=625000000 Hz freq_word=0x...`
+   - `Bring-up complete; scope on AD9176 RF outputs`
+5. Scope on AD9176 J1: 10 MHz sine wave at the configured amplitude.
+6. Re-tune without re-init:
+   ```sh
+   ad9176-config tone --freq 5000000
+   ```
+   Scope should track to 5 MHz with no glitch.
+
+**Pass criterion:**
+- `ad9176-config bringup` exits 0 with both AD9176 ID + JESD sync OK.
+- Scope shows clean sine at configured `--freq`, amplitude near
+  full-scale, no spurs above -40 dBc within +/-10 % of carrier.
+
+**Failure path:**
+
+- `fmc_ready never asserts`: same checklist as Procedure 5.A
+  (FMC seating, VADJ=1.2 V, MAX10 PGOOD LED).
+- `AD9176 chip_type=0x.. prod_id=0x...` mismatch: SPI not reaching
+  the AD9176. Check `fmc_spi_en` PIO (Procedure 4.B), `fmc_pe_ctrl`,
+  and scope SCK/MOSI/MISO on the FMC test points.
+- `JESD link-lock timeout`: capture the JESD GTS CSR snapshot
+  (`ad9176-config peek 0x2000`..`0x2FFC` and same for `0x3000`)
+  and file in [potential_issues.md](potential_issues.md). Common
+  causes: AD9176 mode register mismatch, HMC7044 mis-configured,
+  SUBCLASSV strap mismatch.
+- `Bring-up returns 0 but scope is silent`: AD9176 main DAC may be
+  in standby; check `ad9176-config peek 0x080` (REG_PIO_CTRL) and
+  `peek 0x040` (REG_SINE_CTRL bit 0); poke 0x1 if zero.
+
+---
+
 ## How to add a new stage's procedures
 
 When closing a stage, append a `## Stage N — <name>` section here that

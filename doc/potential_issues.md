@@ -490,3 +490,50 @@ the exit code was 1 even on otherwise-clean builds.
       confirm `agilex5_devkit.sof` is produced and reported.
 - [ ] First hardware bring-up: schedule for less than 1 hour of
       continuous-bitstream time, or re-flash periodically.
+
+---
+
+## ISSUE-017: Phase A `iq_router_regs.h` is stale; new `dac_subsys_regs.h` is the source of truth
+
+**Date:** 2026-05-20
+**Module:** `software/ad9176_config/` (PLAN.md Stage 7 reg-audit task)
+**Status:** Closed -- new header `software/ad9176_config/dac_subsys_regs.h`
+authored against `dac_controller_pkg.vhd` constants. The Phase A
+reference at `software/ad9176_config/reference/iq_router_regs.h` is
+retained for traceability but is NOT used by Phase B code.
+
+**Audit findings (2026-05-20):**
+
+Phase A's `iq_router_regs.h` was authored against the older `IqRouterPkg`
+register map, which used a wider address space and merged the SPI master
+into the same IP. Phase B's `reg_bank.vhd` uses a 10-bit address space
+(1 KB) and the SPI master is a separate IP at LWS2F+0x1000. Concrete
+drift:
+
+| Symbol | Phase A iq_router_regs.h | Phase B reg_bank.vhd | Resolution |
+|--------|--------------------------|----------------------|------------|
+| `REG_JESD_SYNC_CTRL`    | `0x0320` | `0x020` | new header |
+| `REG_JESD_SYNC_STATUS`  | `0x0324` | `0x024` | new header |
+| `REG_JESD_SYNC_ERR`     | `0x0328` | `0x028` | new header |
+| `REG_JESD_TX_SRC_SEL`   | `0x0330` | `0x030` | new header |
+| `REG_JESD_TX_SRC_STAT`  | `0x0334` | `0x034` | new header |
+| `REG_SINE_CTRL`         | `0x0400` | `0x040` | new header |
+| `REG_SINE_FREQ_CH1_I`   | `0x0410` | `0x050` | new header |
+| ... (all SINE_*)        | `0x041x`..`0x043x` | `0x05x`..`0x07x` | new header |
+| `REG_SPI_CTRL`/`STATUS` | inside iq_router 0x0500 | separate IP at LWS2F+0x1000 | new SPI driver |
+| `SPI_MAP_BASE`          | `0x2000`..`0x3FFF` | n/a (Altera Avalon-MM SPI Master used instead) | rewritten |
+
+**Resolution path:**
+- New header `software/ad9176_config/dac_subsys_regs.h` matches
+  `reg_bank.vhd` exactly (manual cross-check 2026-05-20).
+- Phase A `iq_router_regs.h` left in `reference/` directory; not in
+  Stage 7 build paths.
+- `software/ad9176_config/ad9176_fmc_ebz.c` provides a new SPI
+  transport on top of the Altera Avalon-MM SPI Master CSR (24-bit
+  full-duplex single-frame transactions).
+
+**Action items:**
+- [x] Audit complete; ISSUE closed.
+- [ ] On any future `reg_bank.vhd` edit: re-audit `dac_subsys_regs.h`
+      against the updated case statement before the next firmware build.
+
