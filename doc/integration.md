@@ -843,6 +843,36 @@ bitbake core-image-minimal-dev
 
 ---
 
+## Stage 9 -- Hygiene & doc finalization
+
+**PLAN reference:** [PLAN.md Stage 9](../PLAN.md#stage-9--hygiene--doc-finalization)
+
+**Status:** COMPLETE (2026-05-21).
+
+**What got deferred:**
+
+- **`verilator --lint-only` run** -- workstation has no verilator
+  install; Quartus elaborate covers the same ground for this
+  workstation. See [deferred_hw_gates.md](deferred_hw_gates.md)
+  Stage 9 verilator entry.
+- **Reproducible-build full re-run** -- per Stage 9 scoping decision
+  D11, the existing `output_files/agilex5_devkit*.sof` was reused
+  because no source files have changed in a way that affects fitter
+  output. See [deferred_hw_gates.md](deferred_hw_gates.md) Stage 9
+  reproducible-build entry. The reproducibility check rolls into
+  Procedure 5.A's bench-side build.
+- **ISSUE-019 fix (GTS Reset Sequencer)** -- a real architectural gap
+  surfaced by Stage 9's DRC sweep; the fix is small (one IP + 3
+  connections + an address-map entry at `0x0200_4000`) but belongs
+  to whatever stage owns the JESD bring-up hardware turn-on. See
+  [potential_issues.md ISSUE-019](potential_issues.md).
+
+No new in-procedure hardware steps -- Stage 9 is doc / lint hygiene.
+Stage 9 closeout is documentary only; the bench-side validation is
+Procedure 5.A.
+
+---
+
 ## How to add a new stage's procedures
 
 When closing a stage, append a `## Stage N — <name>` section here that

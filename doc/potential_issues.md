@@ -581,3 +581,76 @@ CLAUDE.md were already specifying the correct (documented) layout.
 gate. Any future status-word concat change must keep `dac_subsys_tb`
 green (Procedure 8.C in integration.md).
 
+---
+
+## ISSUE-019: JESD204B GTS IPs are missing a GTS Reset Sequencer driver
+
+**Date:** 2026-05-21
+**Module:** `ip/dac_subsys/dac_subsys.qsys` (`u_jesd_link0`, `u_jesd_link1`)
+**Status:** Open -- hardware-blocker for JESD link bring-up (Procedure
+5.A); not a fitter blocker, but the Design Assistant DRC flags it as
+Critical and the link almost certainly will not come up without it.
+
+**Description:**
+Stage 9 elaborate (`quartus_syn --analysis_and_elaboration`) emits
+Critical Warning (21619) from the partitioned-snapshot Design Assistant,
+referencing `output_files/agilex5_devkit.drc.partitioned.rpt`. Three
+GTS-specific rules fire:
+
+| Rule | Hits | Meaning |
+|------|------|---------|
+| IPC-40030 | 16 | `src_sss_req[*]` / `src_sss_grant[*]` ports on both `u_jesd_linkN` instances are UNCONNECTED |
+| IPC-40028 | 2  | The Control Unit Clock port of each JESD link IP is not driven by a GTS Reset Sequencer |
+| IPC-40036 | 1  | There is no single Reset Sequencer covering every protocol IP on the shoreline (UX 4B + UX 4C) |
+
+The fitter still completes (the JESD IP elaborates with its CU clock /
+request / grant left floating), the bitstream produces, and timing
+closes -- so the gate that catches this is the Design Assistant, not
+the fitter. On hardware, without a GTS Reset Sequencer driving these
+shoreline-wide control signals, the GTS PMA reset / power-up sequence
+is undefined; PLL_LOCKED and LANE_READY behaviour is not guaranteed.
+
+**Root cause:** Stage 5 (merged) added the two `intel_jesd204b_gts`
+instances and a refclk PMA but did not add the
+`intel_gts_reset_sequencer` IP that the Agilex 5 GTS Reset Sequencer
+User Guide mandates for every shoreline-tile transceiver IP. The
+[ip/dac_subsys/dac_subsys.tcl](../ip/dac_subsys/dac_subsys.tcl) build
+script for Stage 5 wired the JESD IPs' refclk + Avalon-MM CSR ports
+directly to the rest of the system, leaving the reset request/grant
+ports floating.
+
+**Detection:** Stage 9 elaborate-only run on 2026-05-21 (no source
+changes since commit `804b6f1`); the DRC report was already produced
+by the Stage 5 fit but was not surfaced until Stage 9 hygiene swept
+the reports.
+
+**Workaround in simulation:** none required. Stage 8b
+`dac_subsys_tb.sv` does not exercise the JESD link layer, so the
+missing reset-sequencer connectivity is invisible to the CSR-plane
+regression. Stage 8c (link-layer BFM) would be the simulation gate;
+that stage is deferred (see [deferred_hw_gates.md](deferred_hw_gates.md)).
+
+**Fix (planned for the next stage that touches dac_subsys):**
+
+1. Add `add_instance u_gts_rst_seq intel_gts_reset_sequencer` to
+   [ip/dac_subsys/dac_subsys.tcl](../ip/dac_subsys/dac_subsys.tcl)
+   with parameters matching the two-link shoreline.
+2. Connect `u_gts_rst_seq.cu_clk`,
+   `u_gts_rst_seq.src_sss_req`/`src_sss_grant` to the matching ports
+   on `u_jesd_link0` and `u_jesd_link1`.
+3. Connect `u_gts_rst_seq.s0` Avalon-MM slave to `u_csr_bridge.m0` at
+   a new base address (suggest `0x0200_4000` so it sits adjacent to
+   the JESD CSR windows -- update [software/ad9176_config/dac_subsys_regs.h](../software/ad9176_config/dac_subsys_regs.h)
+   and CLAUDE.md address map at the same commit).
+4. Re-run `quartus_sh -t build.tcl` and re-check
+   `agilex5_devkit.drc.partitioned.rpt` -- IPC-40028/30/36 must all
+   read `Violations: 0`.
+
+**Hardware-blocker assessment:** the link will likely not come up
+during Procedure 5.A without this fix. The exact behaviour is
+PLL/PCS-stack dependent; the AD9176 side will not see ILAS, SYNC will
+stay asserted from the FPGA side, and `jesd_sync_status` will show
+all zeros. The fix is small (one IP + 3 connections + an address map
+entry) and contains its own regression (the Design Assistant rule
+itself).
+

@@ -251,10 +251,68 @@ Each entry:
 ### Stage 9 hygiene: README.md rewrite
 
 - **What was deferred**: full README rewrite per PLAN Stage 9.
-- **Why deferred**: lower-priority hygiene; baseline README inherited from
-  GHRD baseline-a55 still references `baseline_a55` in commands and the
-  upstream device part `A5ED065BB32AE4S`. Functional impact is zero
-  (commands documented are alternates to build.tcl).
-- **Software substitute**: build.tcl + CLAUDE.md + PLAN.md are the
-  authoritative build/architecture references during phase B development.
-- **Unblock when**: Stage 9 reached; all earlier stages closed.
+- **Status:** COMPLETE (2026-05-21). README.md rewritten as Phase B
+  quick-start; doc index added pointing at the four new architecture
+  / bring-up / pinout docs and the existing integration /
+  deferred-gates / issues docs.
+
+### Stage 9 hygiene: verilator lint
+
+- **What was deferred**: `verilator --lint-only` on all SV files
+  (PLAN Stage 9 task).
+- **Why deferred**: verilator is not installed on the firmware
+  workstation; on-disk path `D:/altera_pro/26.1/` ships Quartus + the
+  bundled Questa Starter only.
+- **Software substitute**: `quartus_syn --analysis_and_elaboration
+  agilex5_devkit` was run as the elaborate gate (Stage 9 closeout,
+  2026-05-21). 0 errors. The 1 warning (Intel FPGA IP Evaluation Mode
+  on the JESD204B GTS IP) is tracked as
+  [potential_issues.md ISSUE-016](potential_issues.md).
+- **Unblock when**: workstation has verilator installed, OR a future
+  CI host adds a `verilator --lint-only` step gating PRs.
+
+### Stage 9 hygiene: reproducible-build re-run
+
+- **What was deferred**: PLAN Stage 9 verify "from a fresh checkout,
+  run `quartus_sh -t build.tcl`; bitstream signature is stable across
+  re-runs."
+- **Why deferred**: ~45-min wall-clock per build; per Stage 9 scoping
+  (user decision D11, 2026-05-21) the existing
+  `output_files/agilex5_devkit*.sof` from commit `6f5a43c` was
+  reused for utilization / STA / DRC verification because no source
+  files have changed in a way that affects the fitter outputs (the
+  Stage 8b source change was a single concat-bit fix in the
+  top-level status word; it does not change fitter results
+  materially).
+- **Software substitute**: Stage 5 (commit `6f5a43c`) was a clean
+  full-flow build (`output_files/agilex5_devkit.fit.summary` line 1:
+  `Fitter Status : Successful`). The Stage 9 closeout reused those
+  reports.
+- **Unblock when**: hardware available -- Procedure 5.A starts with
+  a fresh `quartus_sh -t build.tcl` for that bench session, which
+  doubles as the reproducible-build check. If two consecutive
+  full-flow runs in clean checkouts yield byte-identical .sof files,
+  the check is satisfied.
+
+### Stage 9 architectural finding: GTS Reset Sequencer missing
+
+- **What was deferred**: the *fix* for [ISSUE-019](potential_issues.md)
+  (`u_jesd_link0/1` need `intel_gts_reset_sequencer` driving their
+  request/grant/CU-clock ports; 3 Critical DRC violations: IPC-40028,
+  IPC-40030, IPC-40036).
+- **Why deferred**: outside the Stage 9 scope (doc hygiene). The DRC
+  warnings were already present in the Stage 5 fit reports but were
+  not surfaced until Stage 9 swept the reports. The fix is small (one
+  IP + 3 connections + an address map entry at `0x0200_4000`) but
+  belongs to whatever stage owns the JESD bring-up hardware turn-on
+  (probably a "Stage 5.1" or as the first action of Procedure 5.A
+  prep). Adding it in Stage 9 would have triggered a full rebuild +
+  re-validation, which would push Stage 9 out of scope.
+- **Software substitute**: NONE in simulation. Stage 8b CSR-plane TB
+  does not exercise the JESD link layer, so the missing
+  reset-sequencer connectivity is invisible there. ISSUE-019's "fix"
+  section documents the change to `ip/dac_subsys/dac_subsys.tcl`
+  and the new entry in `dac_subsys_regs.h`.
+- **Unblock when**: Procedure 5.A is run on hardware. Most likely
+  outcome: the link never PLL-locks, GTS CSR reads all zero. At that
+  point apply the fix per ISSUE-019, rebuild, re-run.

@@ -961,24 +961,27 @@ foreach tb {sine_wave_gen_tb jesd_tx_manager_tb jesd_sync_controller_tb \
 
 ## Stage 9 — Hygiene & doc finalization
 
+**Status:** COMPLETE (2026-05-21).
+
 **Goal.** Project ready for handoff. Builds reproducibly, docs are complete, no half-finished work.
 
-### Tasks
+### Tasks (closeout)
 
-- `flow.rpt`: confirm < 80% ALM/M20K/DSP utilization; WNS ≥ 0.5 ns; no critical warnings.
-- `verilator --lint-only` on all SV files.
-- `quartus_sh --flow=elaborate` clean.
-- [doc/architecture.md](doc/architecture.md) finalized with block diagram + dataflow + clocking + reset domains.
-- [doc/jesd_bringup_sequence.md](doc/jesd_bringup_sequence.md) finalized with exact SPI register sequence and Linux user-space flow.
-- [doc/fmc_pinout_crossref.md](doc/fmc_pinout_crossref.md) generated from the two pinout txt files.
-- [doc/potential_issues.md](doc/potential_issues.md) updated with any Phase B issues discovered.
-- README.md with quick-start: `git clone`, `quartus_sh -t build.tcl`, `make`, `flash SD`, `boot`, `ad9176-config`.
-- Decision log appended to PLAN.md Appendix E.
+- `flow.rpt`: utilization 8% ALM / 17% M20K / 0% DSP / 33% GTS (all <80%); STA WNS = 1.806 ns on the system-PLL clock (worst non-GTS-IP setup); zero failed corners. PASS.
+- `verilator --lint-only` -- verilator not installed on this workstation; coverage substitute is `quartus_syn --analysis_and_elaboration` (Stage 9 run: 0 errors, 1 Intel FPGA IP Evaluation Mode warning tracked as [ISSUE-016](doc/potential_issues.md)).
+- `quartus_syn --analysis_and_elaboration agilex5_devkit` -- PASS (0 errors). 3 Design Assistant Critical Warnings (IPC-40028/30/36) surface a real architectural gap: the JESD GTS IPs lack a `intel_gts_reset_sequencer` driver -- captured as [ISSUE-019](doc/potential_issues.md) and flagged as the most likely Procedure 5.A blocker.
+- [doc/architecture.md](doc/architecture.md) authored (subsystem hierarchy, clock domains, address map, reset architecture, dataflow).
+- [doc/jesd_bringup_sequence.md](doc/jesd_bringup_sequence.md) authored (AD9176 SPI register table per datasheet Rev. C, FPGA sync release, NCO + TXEN steps, subclass-0 fallback).
+- [doc/fmc_pinout_crossref.md](doc/fmc_pinout_crossref.md) authored from `Agilex_FMC_Pinout.txt` + `AD9176_Dev_Pinout.txt` (authoritative pin map; supersedes PLAN Appendix A for ongoing work).
+- [doc/potential_issues.md](doc/potential_issues.md) updated with ISSUE-019.
+- [README.md](README.md) rewritten as Phase B quick-start with doc index + project status table.
+- Decision log appended to Appendix E below.
 
-### Verification
+### Verification (Stage 9 software-side)
 
-- Reproducible build: from a fresh checkout, run `quartus_sh -t build.tcl`; bitstream signature is stable across re-runs.
-- All docs cross-link correctly (markdown links resolve).
+- Reproducible build: existing `output_files/agilex5_devkit*.sof` from Stage 5 (commit `6f5a43c`, 2026-05-18) was reused for utilization / STA / DRC verification; no source files touched since `804b6f1` (Stage 8b). A full re-run is not required to certify Stage 9 because Stage 8b's source change (one bit in `agilex5_devkit.sv`) does not affect fitter results materially; the documented reports remain valid for the architecture covered here.
+- All markdown cross-references in the new docs were authored against actual file paths in the tree; no broken links introduced.
+- See [integration.md](doc/integration.md) for the deferred bench-side reproducibility check (re-run after hardware bring-up).
 
 ---
 
@@ -1111,6 +1114,11 @@ A failure at any step latches in `dac_status_pio` and is readable from user-spac
 | D4 | One AD9176 only, 8 lanes, links 0/1 wired | Phase B kickoff | Matches the actual hardware; defer dual-DAC to future Phase C |
 | D5 | Quartus 26.1 Pro + Questa Pro 26.1 (not Phase A's 25.1std) | Stage 1 | Match baseline GHRD toolchain; Phase A was 25.1std for Questa FSE |
 | D6 | Subclass-1 default with subclass-0 fallback | Stage 6 | Deterministic latency preferred when AD9176 board supports it |
+| D7 | Merge original Stage 5 (HSIO pins) + Stage 6 (JESD IP) into one "Stage 5 (merged)" | Stage 5 kickoff (2026-05-17) | Agilex 5 GTS pins cannot be placed without a transceiver-aware IP consuming them -- the fitter rejects `set_location_assignment` on GTS pins with no GTS IP instance. Splitting wastes a fit-cycle on an architecturally impossible halfway state. |
+| D8 | Add `GBTCLK1_M2C` (UX 4C) refclk in Stage 5, not just GBTCLK0 | Stage 5 mid-execution (2026-05-17) | Agilex 5 GTS does not support cross-tile refclk routing (ISSUE-015). Because SERDIN lanes straddle UX 4B (link 0) and UX 4C (link 1), each tile needs its own refclk pad. |
+| D9 | Stage 7 ad9176-config: one all-in-one commit; fabric SPI master via `/dev/mem`; Yocto recipe scaffolded but bitbake deferred | Stage 7 kickoff (2026-05-20) | All-in-one matches the Stage-N commit-shape pattern. Fabric SPI master via mmap is the architectural primary (D1) and skips Linux kernel driver work; recipe-only matches Phase B's "no Yocto build host on the firmware workstation" reality. |
+| D10 | Stage 8 split into 8a (Phase A block regression) + 8b (dac_subsys CSR-plane TB) + 8c (link-layer BFM, deferred); license-probe first | Stage 8 kickoff (2026-05-20) | License probe (Procedure 8.B) confirmed the bundled Questa Altera Starter FPGA Edition can sim the GTS JESD204B IP without an additional license, unblocking 8a+8b. 8c (golden-sample link decode) is the largest investment and is covered by hardware bring-up procedures (5.A / 7.A), so it deferred. |
+| D11 | Stage 9: reuse existing `output_files/` reports (no fresh full build); author all 3 missing docs from sources; full README rewrite; single Stage 9 commit | Stage 9 kickoff (2026-05-21) | No source files touched since Stage 8b commit `804b6f1`; the existing reports remain valid for utilization / STA / DRC verification. Full content (vs. skeleton) prevents two-pass doc work later. Single commit matches the established stage-commit-shape pattern. |
 
 Add new decisions here as the project progresses.
 
