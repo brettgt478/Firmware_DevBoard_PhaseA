@@ -879,12 +879,16 @@ ad9176-config
 
 ## Stage 8 — System simulation
 
-**Status:** 8a complete (2026-05-20). Block-level regression of all 8
-Phase A testbenches runs clean under Questa Altera Starter FPGA
-Edition (the simulator bundled with Quartus Pro 26.1). License probe
-confirms the JESD204B GTS IP simulation models compile without
-additional licensing. 8b (integration TB against the real GTS IP)
-and 8c (BFM substitution if 8b walls out) pending.
+**Status (2026-05-20):**
+- 8a -- COMPLETE. All 8 Phase A block TBs pass.
+- 8b -- COMPLETE. `dac_subsys_tb.sv` (CSR plane via LWH2F AXI BFM
+  against the real GTS IP) passes all 6 sub-tests. Caught a real
+  Stage 5 bug along the way: `dac_status_word` concat in
+  `agilex5_devkit.sv` was missing a reserved bit, shifting fmc_ready
+  from bit 5 (where software + docs expect it) down to bit 4.
+- 8c -- DEFERRED. JESD RX BFM golden-sample compare not in current
+  scope; hardware bring-up (Procedures 5.A / 7.A) covers the same
+  link-layer surface area together with 8b's CSR coverage.
 
 **Goal.** Regression-grade simulation that exercises the integrated system. Each new RTL change runs `vsim -c -do "do run_sim.tcl; quit -f"` and gets a pass/fail in under 10 minutes.
 

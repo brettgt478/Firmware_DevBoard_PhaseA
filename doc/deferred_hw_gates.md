@@ -211,25 +211,38 @@ Each entry:
 - **License probe**: see
   [integration.md Procedure 8.B](integration.md#procedure-8b----license-probe-diagnostic-on-demand).
 
-### Stage 8b -- integration TB against the real JESD204B GTS IP (pending)
+### Stage 8b -- integration TB against the real JESD204B GTS IP
 
-- **What was deferred**: writing `dac_subsys_tb.sv` that drives the
-  real GTS IP (no BFM substitution) over the LWS2F path using the
-  HPS AXI BFM, and asserting JESD link-up / golden-sample comparison.
-- **Why deferred**: queued as the next sub-stage; needs probe
-  evidence from 8a before scoping the work. 8a probe is now PASS.
-- **Software substitute**: 8a confirms the GTS IP simulation models
-  compile cleanly; nothing else available until 8b is written.
-- **Unblock when**: 8b is scheduled. License is not a blocker.
+- **What was deferred**: golden-sample JESD link-up + decoded-frame
+  comparison still needs a JESD RX BFM (no AD9176 model in sim).
+- **Status:** CSR-plane TB COMPLETE (2026-05-20). `dac_subsys_tb.sv`
+  drives the LWH2F AXI BFM through dac_controller_0 scratchpad,
+  SPI master CSR, PIOs, and SineWaveGen NCO. Six sub-tests pass.
+  Wall-clock ~2 h on the dev workstation; ~5 GB sim DB.
+- **What this TB found**: the dac_status_word concat in
+  agilex5_devkit.sv had a missing reserved bit -- fmc_ready was at
+  bit 4 instead of bit 5 (where CLAUDE.md, dac_subsys_regs.h, and
+  the comment block all expected it). Fixed in same Stage 8b commit
+  (`1'b0` -> `2'b00`).
+- **Re-run procedure**: see
+  [integration.md Procedure 8.C](integration.md#procedure-8c----dac_subsys-integration-tb-stage-8b).
+- **Hardware substitute remaining**: link-layer behaviour (PLL
+  lock, ILAS, frame alignment, payload decode) still needs hardware
+  to fully validate; software-side gate covers CSR + handshake.
 
-### Stage 8c -- BFM substitution fallback (conditional)
+### Stage 8c -- JESD RX BFM golden-sample compare (deferred)
 
-- **What was deferred**: if 8b cannot drive the GTS IP in TB context
-  (model size, run-time, encrypted-model debug visibility, etc.),
-  swap to an Intel JESD GTS BFM in TX mode for the link layer.
-- **Why deferred**: 8c is conditional on 8b's outcome.
-- **Software substitute**: n/a.
-- **Unblock when**: 8b explicitly fails or hits unacceptable runtime.
+- **What was deferred**: end-to-end "FPGA SineWaveGen -> JESD link
+  -> BFM RX decode -> compare against math_real sine" loop.
+- **Why deferred**: 8b succeeded for CSR scope; link-layer decode is
+  a larger investment (need an Intel JESD204B GTS BFM or hand-rolled
+  decoder). Not a blocker for hardware bring-up (Procedure 5.A
+  exercises the same link via real silicon).
+- **Software substitute**: 8b CSR coverage + hardware bring-up
+  (Procedures 5.A/7.A) cover the same surface area together.
+- **Unblock when**: a regression escapes hardware bring-up that
+  could only have been caught at the link layer in simulation, OR
+  the dev team adopts pre-silicon link-layer regression as a gate.
 
 ---
 

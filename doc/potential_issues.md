@@ -537,3 +537,47 @@ drift:
 - [ ] On any future `reg_bank.vhd` edit: re-audit `dac_subsys_regs.h`
       against the updated case statement before the next firmware build.
 
+---
+
+## ISSUE-018: dac_status_word concat missed one reserved bit; fmc_ready was at bit 4 vs documented bit 5
+
+**Date:** 2026-05-20
+**Module:** `projects/agilex5_devkit/agilex5_devkit.sv` (Stage 5 merged)
+**Status:** Closed -- single-line fix in agilex5_devkit.sv (`1'b0` ->
+`2'b00`) brings the hardware status word into agreement with the
+documented bit layout that CLAUDE.md, dac_subsys_regs.h, and the
+comment block above the assignment all already specified.
+
+**Description:**
+The original Stage 5 assignment was:
+
+    assign dac_status_word = {26'd0, fmc_ready_internal, 1'b0,
+                              fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
+
+26 + 1 + 1 + 1 + 1 + 1 = 31 bits, assigned to a 32-bit wire with
+implicit zero-extend on the MSB. The documented bit layout (see the
+comment block at the same line) reserves a TWO-bit slot at [4:3] for
+the unused GA[1:0] FMC sideband. The concat only had ONE 1'b0 there,
+so fmc_ready landed at bit 4 instead of bit 5.
+
+Software impact (would have been silent at runtime):
+- `software/ad9176_config/dac_subsys_regs.h` defined
+  `DAC_STATUS_FMC_READY_BIT = 5`, matching the documented layout.
+- `ad9176_wait_fmc_ready()` would have polled bit 5 forever; the
+  AD9176 bring-up would have been stuck at the very first gate.
+
+**Detection:** caught by Stage 8b's `dac_subsys_tb.sv` T1: after
+dropping `fmc_prsnt_n` in sim, the test polled `dac_status_pio`
+expecting bit 5 to assert. After 200 polls (well past the 32-cycle
+handshake hold-off) the read returned `0x11` -- bits 0 and 4 -- not
+bit 5. Bit-counting the concat revealed the shift.
+
+**Fix:** `1'b0` -> `2'b00` in the reserved [4:3] slot of the concat.
+`dac_subsys_tb` T1 then passes; T6 (re-read stickiness) passes;
+no other software changes needed because both `dac_subsys_regs.h` and
+CLAUDE.md were already specifying the correct (documented) layout.
+
+**Regression protection:** `dac_subsys_tb` T1 is now the regression
+gate. Any future status-word concat change must keep `dac_subsys_tb`
+green (Procedure 8.C in integration.md).
+

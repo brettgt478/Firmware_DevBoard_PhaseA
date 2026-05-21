@@ -214,7 +214,10 @@ module agilex5_devkit (
     wire fmc_pg_c2m_drive;          // PIO output bit (dangling externally)
     wire fmc_ready_internal;
     wire [31:0] dac_status_word;
-    assign dac_status_word = {26'd0, fmc_ready_internal, 1'b0, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
+    // [31:6]=0, [5]=fmc_ready, [4:3]=reserved (GA), [2]=pg_c2m, [1]=reserved
+    // (PG_M2C), [0]=~prsnt_n. The two-bit reserved slot at [4:3] was a single
+    // 1'b0 prior to Stage 8b; Stage 8b TB caught the shift (dac_subsys_tb T1).
+    assign dac_status_word = {26'd0, fmc_ready_internal, 2'b00, fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
 
     // Stage 5 (merged): FMC presence + power-good gate. PG_M2C is owned by
     // the on-board MAX10 board-mgmt FPGA (CLAUDE.md ISSUE-012); the MAX10

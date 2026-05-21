@@ -695,6 +695,52 @@ and exit code 0.
   license server does not include the simulation feature; contact
   license admin.
 
+### Procedure 8.C -- dac_subsys integration TB (Stage 8b)
+
+**Goal.** Drive the dac_subsys CSR plane through the HPS LWH2F AXI
+BFM against the real baseline_top netlist (real JESD204B GTS IP
+instances, no BFM substitution). Confirms the LWH2F -> AXI -> AvMM
+-> reg_bank / SPI master / PIO paths are alive in simulation; gates
+the address-decode and bit-layout correctness that hardware-side
+debugging is otherwise expensive to find.
+
+**Hardware required:** None. Long runtime (~2 hours wall clock on a
+typical workstation; ~5 GB sim DB).
+
+**Steps:**
+
+```sh
+cd projects/agilex5_devkit/sim
+vsim -c -do run_dac_subsys_tb.do
+```
+
+**Pass criterion:** Final lines of the transcript include
+`dac_subsys_tb summary: errors=0` and `dac_subsys_tb: SIMULATION
+PASSED`. All six sub-tests pass:
+- T1: fmc_handshake asserts fmc_ready when prsnt_n drops + pg_m2c=1
+- T2: scratchpad write/readback survives LWH2F -> AvMM
+- T3: SPI master CONTROL/SLAVESEL CSR writes survive
+- T4: PIOs (tx_en, pe_ctrl, spi_en) write/read-back at the right
+  byte offsets
+- T5: SineWaveGen NCO freq + amp CSRs round-trip
+- T6: dac_status_pio still reflects fmc_ready (stickiness check)
+
+**Failure path:**
+- T1 FAIL `fmc_ready never asserted`: walk the dac_status_word
+  concat in [agilex5_devkit.sv:217](../projects/agilex5_devkit/agilex5_devkit.sv#L217).
+  The Stage 8b run originally caught a missing reserved bit in this
+  concat (`1'b0` -> `2'b00`) that shifted fmc_ready from bit 5 to
+  bit 4 vs documentation -- regression-protect that fix.
+- T2-T5 FAIL: address decode error in `dac_subsys.qsys`. Re-check
+  the `set_connection_parameter_value ... baseAddress` lines in
+  [ip/dac_subsys/dac_subsys.tcl](../ip/dac_subsys/dac_subsys.tcl).
+- T6 FAIL `fmc_ready dropped`: fmc_handshake spurious resync. Check
+  [src/fmc_handshake.sv](../projects/agilex5_devkit/src/fmc_handshake.sv)
+  hold-off counter behavior after the initial assert.
+- vsim hangs past 3 hrs: the JESD GTS IP simulation may be spinning
+  on PLL lock (no RX peer in sim). Add a watchdog in the TB and
+  consider Stage 8c (BFM substitution).
+
 ---
 
 ## Stage 7 -- ad9176-config user-space tool & full Linux-driven bring-up
