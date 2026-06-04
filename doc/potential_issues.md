@@ -590,6 +590,10 @@ green (Procedure 8.C in integration.md).
 **Status:** Open -- hardware-blocker for JESD link bring-up (Procedure
 5.A); not a fitter blocker, but the Design Assistant DRC flags it as
 Critical and the link almost certainly will not come up without it.
+Scope corrected 2026-06-03 after analysing the full target-machine DRC
+set (elaborated + synthesized + signoff) -- this is a clock/reset cluster,
+not a single IP; see "Corrected scope" below. Two independent SDC
+side-findings surfaced by the same DRC set are fixed (see end of entry).
 
 **Description:**
 Stage 9 elaborate (`quartus_syn --analysis_and_elaboration`) emits
@@ -630,27 +634,92 @@ missing reset-sequencer connectivity is invisible to the CSR-plane
 regression. Stage 8c (link-layer BFM) would be the simulation gate;
 that stage is deferred (see [deferred_hw_gates.md](deferred_hw_gates.md)).
 
-**Fix (planned for the next stage that touches dac_subsys):**
+**Downstream cascade (2026-06-03 analysis of the target-machine DRC set):**
+the missing sequencer is not just a Critical elaborated-snapshot flag --
+it silently corrupts the synthesized and signoff snapshots too. With
+`pma_cu_clk` tied to GROUND, the GTS PMA never produces a TX clock:
+`phy_tx_clkout2[0]` is reported `stuck at 0` in
+`output_files/agilex5_devkit.syn.rpt` (23,663 objects swept). That dead
+net is the `txphy_clk[0]` loopback that the top SV feeds back as
+`jesd_link_clk`. With its clock constant, `sysref_capture` is optimized
+away entirely (syn.rpt "Hierarchies Optimized Away During Sweep"), which
+strands `fmc_sysref`/`fmc_sync0`/`fmc_sync1` as non-driving inputs
+(synthesized DRC **FLP-10500**), and their `fmc_io.sdc` false-path
+exceptions then target empty collections (signoff DRC **TMC-20025 x3 /
+TMC-20026 x3**). All of these self-heal once the sequencer makes the
+JESD datapath real -- they are symptoms, not independent bugs.
 
-1. Add `add_instance u_gts_rst_seq intel_gts_reset_sequencer` to
-   [ip/dac_subsys/dac_subsys.tcl](../ip/dac_subsys/dac_subsys.tcl)
-   with parameters matching the two-link shoreline.
-2. Connect `u_gts_rst_seq.cu_clk`,
-   `u_gts_rst_seq.src_sss_req`/`src_sss_grant` to the matching ports
-   on `u_jesd_link0` and `u_jesd_link1`.
-3. Connect `u_gts_rst_seq.s0` Avalon-MM slave to `u_csr_bridge.m0` at
-   a new base address (suggest `0x0200_4000` so it sits adjacent to
-   the JESD CSR windows -- update [software/ad9176_config/dac_subsys_regs.h](../software/ad9176_config/dac_subsys_regs.h)
-   and CLAUDE.md address map at the same commit).
-4. Re-run `quartus_sh -t build.tcl` and re-check
-   `agilex5_devkit.drc.partitioned.rpt` -- IPC-40028/30/36 must all
-   read `Violations: 0`.
+**Corrected scope (the earlier "one IP + 3 connections" estimate was
+wrong).** The authoritative reference is Altera's own example-design
+generator for this exact IP:
+`<quartus>/ip/altera/jesd204b_gts/ed/ds/ds_jesd_subsystem_qsys.tcl.terp`.
+A GTS JESD shoreline needs a clock/reset *cluster*, not a single IP:
 
-**Hardware-blocker assessment:** the link will likely not come up
-during Procedure 5.A without this fix. The exact behaviour is
-PLL/PCS-stack dependent; the AD9176 side will not see ILAS, SYNC will
-stay asserted from the FPGA side, and `jesd_sync_status` will show
-all zeros. The fix is small (one IP + 3 connections + an address map
-entry) and contains its own regression (the Design Assistant rule
-itself).
+  - `intel_srcss_gts` (the GTS source clock/reset sequencer) -- provides
+    `pma_cu_clk` and the `src_rs_req`/`src_rs_grant` handshake to each
+    `intel_jesd204b_gts`. Parameters `NUM_LANES_SHORELINE` and
+    `NUM_BANKS_SHORELINE` must match the *physical* TX lane/bank
+    placement (8 lanes across UX 4B + UX 4C; confirm bank count from the
+    fitter). This clears IPC-40028 + IPC-40030.
+  - `altera_reset_sequencer` x1+ (`ENABLE_CSR=1`) -- the Avalon-MM reset
+    sequencer that clears IPC-40036. Its `*_dsrt_qual` qualification
+    inputs must be wired to the JESD IP status (`pll_locked`,
+    `tx_rst_ack_n`, `out_of_reset`) -- which in the example design is done
+    with a small amount of top-level SV glue (registers
+    `core_pll_locked_reg`, `tx_rst_ack`, `tx_out_of_reset`).
+  - PMA clocking mode is in use (`clocking_mode=PMA`), so the
+    `intel_systemclk_gts` / `altera_iopll` instances that the example adds
+    only under `clocking_mode=syspll` are NOT required here -- verify.
+
+  Confirmed JESD IP signal names available for the wiring (from the
+  generated `ip/dac_subsys/dac_subsys.qsys`): `pma_cu_clk`, `src_rs_req`,
+  `src_rs_grant`, `i_src_rs_priority`, `tx_rst_ack_n`, `pll_locked`,
+  `out_of_reset`. The Platform Designer *interface* names (e.g.
+  `src_o_pma_cu_clk`, `src_i_src_rs_req`, `src_o_src_rs_grant`) are as
+  emitted by the ds_group wrapper in the reference script above.
+
+**Implementation procedure (must run on the build machine -- needs
+`qsys-generate` + fit + DRC to validate; cannot be done blind):**
+
+1. Mirror the `inst_src` / `reset_seq*` instantiation + connection block
+   from `ds_jesd_subsystem_qsys.tcl.terp` into
+   [ip/dac_subsys/dac_subsys.tcl](../ip/dac_subsys/dac_subsys.tcl),
+   adapted for TX-only, dual-link, shared txlink_clk, PMA clocking.
+2. Add the reset-qualification glue to
+   [projects/agilex5_devkit/agilex5_devkit.sv](../projects/agilex5_devkit/agilex5_devkit.sv)
+   (or a small VHDL helper) per the example top.
+3. Give the reset-sequencer CSR a base at `0x0200_4000` (adjacent to the
+   JESD CSR windows); update
+   [software/ad9176_config/dac_subsys_regs.h](../software/ad9176_config/dac_subsys_regs.h)
+   and the CLAUDE.md address map in the same commit. (Do NOT add the
+   address-map entry before the IP exists -- a CSR window pointing at no
+   slave is its own DRC hit.)
+4. After it elaborates: re-confirm the `jesd_cdc.sdc` clock-group names
+   (the txphy_clk loopback only becomes a real clock at this point) with
+   `report_clocks` / `report_clock_groups`.
+5. Re-run `quartus_sh -t build.tcl` and verify in
+   `agilex5_devkit.drc.partitioned.rpt`: IPC-40028/30/36 = 0; and in the
+   synthesized/signoff DRC: FLP-10500 = 0 and the sysref/sync TMC-20025/
+   20026 entries are gone.
+
+**Hardware-blocker assessment:** the link will not come up during
+Procedure 5.A without this fix. The exact behaviour is PLL/PCS-stack
+dependent; the AD9176 side will not see ILAS, SYNC stays asserted from
+the FPGA side, and `jesd_sync_status` reads all zeros.
+
+**Related fixes already applied (2026-06-03, commitable now, independent
+of the sequencer):**
+
+- [projects/agilex5_devkit/sdc/fmc_io.sdc](../projects/agilex5_devkit/sdc/fmc_io.sdc):
+  added `set_false_path -from [get_ports fmc_prsnt_n]` -- clears the only
+  **High** signoff finding, TMC-20011 (Missing Input Delay). Independent
+  of ISSUE-019.
+- [projects/agilex5_devkit/sdc/jesd_cdc.sdc](../projects/agilex5_devkit/sdc/jesd_cdc.sdc):
+  replaced the `*u_clk_bridge_axi*` / `*u_clk_bridge_jesd*` clock-group
+  filters (which matched zero clocks -- a clock bridge does not create a
+  named clock) with the real clock names: fabric `...|u_sys_pll|
+  iopll_0_outclk0`, `fmc_gbtclk0/1`, and `*u_dac_subsys|u_jesd_link0/1*`.
+  This actually applies the JESD<->AXI async grouping required by CLAUDE.md
+  s6 #8 and clears STA 332174/332049 + the matching TMC-20025/20026 lines.
+  Re-confirm the group members are non-empty after step 4 above.
 

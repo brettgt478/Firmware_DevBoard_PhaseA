@@ -302,17 +302,31 @@ Each entry:
   IPC-40030, IPC-40036).
 - **Why deferred**: outside the Stage 9 scope (doc hygiene). The DRC
   warnings were already present in the Stage 5 fit reports but were
-  not surfaced until Stage 9 swept the reports. The fix is small (one
-  IP + 3 connections + an address map entry at `0x0200_4000`) but
-  belongs to whatever stage owns the JESD bring-up hardware turn-on
-  (probably a "Stage 5.1" or as the first action of Procedure 5.A
-  prep). Adding it in Stage 9 would have triggered a full rebuild +
-  re-validation, which would push Stage 9 out of scope.
-- **Software substitute**: NONE in simulation. Stage 8b CSR-plane TB
-  does not exercise the JESD link layer, so the missing
-  reset-sequencer connectivity is invisible there. ISSUE-019's "fix"
-  section documents the change to `ip/dac_subsys/dac_subsys.tcl`
-  and the new entry in `dac_subsys_regs.h`.
-- **Unblock when**: Procedure 5.A is run on hardware. Most likely
-  outcome: the link never PLL-locks, GTS CSR reads all zero. At that
-  point apply the fix per ISSUE-019, rebuild, re-run.
+  not surfaced until Stage 9 swept the reports. **Scope corrected
+  2026-06-03**: this is NOT "one IP + 3 connections" -- per Altera's own
+  example-design generator
+  (`<quartus>/ip/altera/jesd204b_gts/ed/ds/ds_jesd_subsystem_qsys.tcl.terp`)
+  it is a clock/reset cluster (`intel_srcss_gts` + `altera_reset_sequencer`
+  + reset bridges + top-level reset-qualification glue), with
+  placement-dependent parameters, plus a re-confirm of the `jesd_cdc.sdc`
+  clock names afterwards. See the corrected "Implementation procedure" in
+  [ISSUE-019](potential_issues.md). It **must be done on the build
+  machine** -- `qsys-generate` + fit + DRC are required to validate it;
+  it cannot be emitted blind without breaking the currently-building
+  design.
+- **Software substitute**: NONE in simulation for the sequencer itself.
+  Stage 8b CSR-plane TB does not exercise the JESD link layer, so the
+  missing reset-sequencer connectivity is invisible there. However, the
+  *downstream DRC symptoms* are now understood and two independent SDC
+  side-findings from the same DRC set have been fixed and are commitable
+  now (no rebuild dependency): `fmc_io.sdc` adds the `fmc_prsnt_n`
+  false_path (clears TMC-20011, the only High), and `jesd_cdc.sdc` now
+  uses real clock names instead of the never-matching `*u_clk_bridge_*`
+  filters (clears STA 332174/332049 + TMC-20025/20026 clock lines and
+  actually applies the CLAUDE.md s6 #8 async grouping). See ISSUE-019
+  "Related fixes already applied".
+- **Unblock when**: Procedure 5.A is run on hardware, OR a build-machine
+  session is taken specifically to implement ISSUE-019. Most likely
+  outcome without the fix: the link never PLL-locks, GTS CSR reads all
+  zero. Apply the fix per ISSUE-019, rebuild, re-run, and confirm
+  IPC-40028/30/36 = 0 and FLP-10500 = 0.
