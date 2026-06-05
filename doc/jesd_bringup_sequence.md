@@ -115,17 +115,24 @@ machine. The controller:
 
 ### Step 6 -- Poll sync status
 
-Read `REG_JESD_SYNC_STATUS` (LWS2F offset `0x0200_0024`) until:
+Read `REG_JESD_SYNC_STATUS` (LWS2F offset `0x0200_0024`) until the ACTIVE
+links/group report ready. The AD9176-FMC-EBZ populates only links 0-1 (sync
+group 0); links 2-3 are tied low, so `txlink_ready` never reaches `0xF`,
+`group_synced` never reaches `0x3`, and `lmfc_aligned` (which requires BOTH
+groups in `ST_RUNNING`) stays `0`. Gate on the active fields only -- see
+[potential_issues.md ISSUE-009](potential_issues.md#issue-009-lmfc_aligned-always-reads-0-with-single-ad9176):
 
-| Field | Mask | Expected |
-|-------|------|----------|
-| `txlink_ready` | `0x0F` | `0xF` (all 4 lanes per link ready on both links -> 0xF combined per
-[ad9176_init.c line 116](../software/ad9176_config/ad9176_init.c#L116)) |
-| `group_synced` | `0x300` | `0x3` (both link groups synced) |
-| `lmfc_aligned` | `0x400` | `1` |
+| Field | Bit / mask | Expected (single AD9176) |
+|-------|------------|--------------------------|
+| `txlink_ready[1:0]` | `0x03` | `0x3` (links 0-1 ready) |
+| `group_synced[0]` | bit 4 (`0x10`) | set (group 0 in `ST_RUNNING`) |
+| `lmfc_aligned` | bit 6 (`0x40`) | `0` -- informational only; never `1` with one AD9176 |
 
-`ad9176_init.c::dac_subsys_wait_link_lock` polls at 1 ms cadence with a
-5000 ms timeout.
+`ad9176_init.c::dac_subsys_wait_link_lock()` polls at 1 ms cadence with a
+5000 ms timeout. It gates on `(txrdy & 0x3) == 0x3 && (grp & 0x1)` and logs
+`lmfc` for diagnostics. (Before the ISSUE-009 fix it waited for
+`txlink=0xF grp=0x3 lmfc=1`, which is unreachable on this board and hung the
+loop -- verify the active-link pass condition on hardware here.)
 
 If the timeout fires, capture the GTS link CSR snapshot via
 `ad9176-config peek 0x2000 .. 0x2FFC` (link 0) and `0x3000 .. 0x3FFC`
@@ -178,7 +185,7 @@ The AD9176 main DAC starts emitting on RF outputs J1..J4.
 | 1 | `chip_type == 0x04 && prod_id == 0x9176` | --- |
 | 2.1 | `DACPLL_STATUS & 0x01 == 0x01` (LOCK) | --- |
 | 3 | _none_ -- register writes only | --- |
-| 5..6 | `JESD_SYNC_STATUS` reads `txlink=0xF grp=0x3 lmfc=1` | Scope on FMC `LA01/LA02` -- `sync_n` rises from 0 to 1 (handshake done) |
+| 5..6 | `JESD_SYNC_STATUS` reads `txlink=0x3 grp=0x1 lmfc=0` (active links 0-1 / group 0; ISSUE-009) | Scope on FMC `LA01/LA02` -- `sync_n` rises from 0 to 1 (handshake done) |
 | 7 | `peek 0x0200_0040` returns `0x1F` | --- |
 | 8 | `peek 0x0200_1100` returns `0x3` | Scope on AD9176 J1: sine at the configured frequency |
 
@@ -193,8 +200,8 @@ fabric-side break, not a JESD or AD9176 break.
 Subclass-1 deterministic latency requires the AD9176-FMC-EBZ
 SYSREF/GBTCLK0 phasing to meet source-sync timing at the FPGA
 balls. The kit strap default is subclass-1 capable; **if** during
-bring-up the LMFC alignment is unstable (Step 6 `lmfc_aligned`
-oscillates), drop to subclass-0:
+bring-up the link won't hold lock (Step 6 `group_synced[0]` drops out, or
+the AD9176 re-asserts `sync_n` after release), drop to subclass-0:
 
 - AD9176 side: write subclass-0 to `AD9176_REG_JESD_MISC_CTRL` bit
   pattern per datasheet Table 75.

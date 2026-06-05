@@ -810,7 +810,7 @@ bitbake core-image-minimal-dev
    - `fmc_ready asserted`
    - `AD9176 chip_type=0x04 prod_id=0x9176`
    - `AD9176 DAC PLL status=0x??` (datasheet bit 0 = LOCK)
-   - `JESD sync OK (status=0x????????)` with `txlink=0xF grp=0x3 lmfc=1`
+   - `JESD sync OK (status=0x???????? txrdy=0x3 grp=0x1 lmfc=0)` (active links 0-1 / group 0 -- ISSUE-009)
    - `SineWaveGen: f=10000000 Hz fs=625000000 Hz freq_word=0x...`
    - `Bring-up complete; scope on AD9176 RF outputs`
 5. Scope on AD9176 J1: 10 MHz sine wave at the configured amplitude.
