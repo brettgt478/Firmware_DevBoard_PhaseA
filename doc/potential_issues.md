@@ -2,7 +2,15 @@
 
 Track design concerns that may surface during integration or hardware bring-up.
 
+Open issues are listed first. Resolved issues are condensed in the
+**Closed Issues (archived)** section at the bottom -- their `## ISSUE-NNN: ...`
+headings are kept verbatim so existing `#issue-NNN-...` anchor links in CLAUDE.md,
+PLAN.md, and the other docs keep resolving. Full detail is in git history
+(`git log -- doc/potential_issues.md`).
+
 ---
+
+## Open Issues
 
 ## ISSUE-001: RegBank Avalon-MM Read Path is Purely Combinational
 
@@ -24,26 +32,6 @@ The `avmm_readdata` output is driven combinationally (no registered output stage
 
 ---
 
-## ISSUE-002: SpiBridge Removed (FPGA SPI deprecated)
-
-**Date:** 2026-04-07
-**Module:** ~~`spi_bridge.vhd`~~ (removed)
-**Status:** Closed — files deleted
-
-**Description:**
-`spi_bridge.vhd` and `spi_bridge_tb.vhd` have been removed from the project. AD9176 SPI
-configuration is handled entirely by HPS software (`src/hps/ad9176_fmc_ebz.c`). The
-previous issues (concurrent-access priority and lack of streaming mode) are moot.
-
----
-
-## ISSUE-003: SpiBridge Removed — see ISSUE-002
-
-**Date:** 2026-04-07
-**Status:** Closed — see ISSUE-002
-
----
-
 ## ISSUE-004: JesdSyncController LMFC Boundary Coincidence Timing
 
 **Date:** 2026-03-16
@@ -60,44 +48,6 @@ However, if links become ready **one clock after** the LMFC boundary (the `lmfc_
 **Worst-case release latency:** `C_LMFC_PERIOD` link clocks after all links are ready. This is by design — LMFC-aligned release is a JESD204B requirement — but hardware bring-up teams should be aware that release timing varies by up to one full LMFC period depending on when links report ready relative to the LMFC counter.
 
 **Verified in simulation:** TB-SYNC-004 tests the "1 clock after LMFC" case and confirms the FSM correctly waits for the next boundary rather than releasing early.
-
----
-
-## ISSUE-005: JesdSyncController — Transient Link Glitch Recovery (Fixed)
-
-**Date:** 2026-03-16
-**Module:** `jesd_sync_controller.vhd`
-**Status:** Fixed
-
-**Description:**
-The original `ST_ERROR` state had a conditional exit: it only transitioned back to `ST_WAIT_LOCK` when `grp_all_ready = '0'`. If a link dropped for only one clock and immediately recovered, the FSM would enter `ST_ERROR` but find `grp_all_ready = '1'` on the very next edge, permanently deadlocking in `ST_ERROR` with no exit path.
-
-**Fix applied:** Changed `ST_ERROR` to unconditionally transition to `ST_WAIT_LOCK` (single-clock transient state). The error flag is still set by the sticky error logic in `p_err`, preserving observability. The FSM then follows the normal `ST_WAIT_LOCK → ST_WAIT_LMFC → ST_RUNNING` recovery path.
-
-**Trade-off:** A single-clock glitch now causes a brief data release drop (~16 clocks worst case for LMFC re-alignment) rather than a permanent hang. This is preferable — transient glitches on `txlink_ready` could occur during JESD link training or due to brief signal integrity events on the serial lanes.
-
-**Verified in simulation:** TB-SYNC-005 tests a 1-clock glitch on link 0 and confirms error flag assertion, automatic recovery, and successful re-sync on the next LMFC boundary.
-
----
-
-## ISSUE-006: Platform Designer Component Ports for `dac_controller_0`
-
-**Date:** 2026-04-07
-**Module:** `dac_controller_0.vhd` (replaces deleted `iq_router.vhd`)
-**Status:** Open — required before synthesis
-
-**Description:**
-`dac_controller_0` is the new top-level entity replacing `iq_router`. The Platform Designer
-component definition must be updated to export the full port list of `dac_controller_0`,
-including both JESD links and the lwhpm2fpga AXI4 bus. SPI ports have been removed (HPS
-software handles SPI directly).
-
-**Action items:**
-- [ ] Update Platform Designer component to match `dac_controller_0` port list
-- [ ] Connect `jesd204_tx_link_clk_clk` to JESD204B GTS IP link clock output
-- [ ] Connect both JESD TX streaming ports (`_jesd204_tx_link_*` and `_p1_jesd204_tx_link_*`)
-- [ ] Verify `lwhpm2fpga_*` AXI4 port widths match the HPS bridge configuration
-- [ ] Regenerate the component and confirm port names match RTL exactly
 
 ---
 
@@ -152,6 +102,11 @@ synchronized qualifier" CDC pattern.
   (RegBank ignoring config writes while enable is set) has been evaluated and deferred to
   software policy.
 
+**Status note (2026-06-04 review):** the Stage 7 bring-up code already follows the
+discipline — `dac_subsys_set_nco_tone()` in `software/ad9176_config/ad9176_init.c`
+writes all freq/phase/amp registers before the `REG_SINE_CTRL` enable write. Remaining
+work is just the explicit header comment below.
+
 **Action items:**
 - [ ] Document the write-before-enable requirement in the HPS driver header
 - [ ] Consider adding a hardware interlock in a future revision if software discipline
@@ -161,9 +116,12 @@ synchronized qualifier" CDC pattern.
 
 ## ISSUE-009: `lmfc_aligned` Always Reads '0' with Single AD9176
 
-**Date:** 2026-04-07
-**Module:** `dac_controller_0.vhd`, `jesd_sync_controller.vhd`
-**Status:** Open — by design, document for HPS software
+**Date:** 2026-04-07  Updated: 2026-06-04
+**Module:** `dac_controller_0.vhd`, `jesd_sync_controller.vhd`,
+`software/ad9176_config/ad9176_init.c`
+**Status:** Open — latent software bug found 2026-06-04; **fix applied 2026-06-05**
+in `ad9176_init.c`, but still requires hardware verification (Procedure 5.A) before
+the new pass condition is trusted.
 
 **Description:**
 `JesdSyncController.lmfc_aligned` is only `'1'` when both `grp0_state = ST_RUNNING` AND
@@ -175,9 +133,27 @@ whether data is flowing correctly.
 HPS software must use `group_synced[0]` (bit 4 of `JESD_SYNC_STATUS`) rather than
 `lmfc_aligned` to determine whether the active JESD links are ready.
 
+**Latent bug found 2026-06-04 (review):** `dac_subsys_wait_link_lock()` in
+`software/ad9176_config/ad9176_init.c` gates success on
+`txrdy == 0x0F && grp == 0x3 && lmfc` — i.e. all four internal links ready, BOTH
+groups synced, AND `lmfc_aligned`. Per the analysis above, on the single-AD9176
+target none of those three can ever be true (links 2/3 tied low → `txrdy` maxes at
+`0x3`, `grp` maxes at `0x1`, `lmfc` is always `0`). The function therefore always
+times out → JESD bring-up hangs at the link-lock gate. **Recommended fix:** gate on
+the active links/group only, e.g. `(txrdy & 0x3) == 0x3 && (grp & 0x1)`, dropping the
+`lmfc` requirement. **Applied 2026-06-05:** `dac_subsys_wait_link_lock()` now gates on
+`(txrdy & 0x3) == 0x3 && (grp & 0x1)` and drops the `lmfc` requirement (`lmfc` stays in
+the success log for diagnostics). This still carries a false-positive risk if a future
+board populates links 2-3 (it would accept a partial lock), so the new pass condition
+must be confirmed against the Phase A link mapping and verified on hardware during
+Procedure 5.A; widen the masks to 0x0F / 0x03 and restore the `lmfc` check if links 2-3
+are ever populated.
+
 **Action items:**
-- [ ] Document in HPS driver: poll `group_synced[0]` for single-AD9176 bring-up, not
-      `lmfc_aligned`
+- [x] Fix `dac_subsys_wait_link_lock()` to gate on active links/group, not
+      `lmfc_aligned` (applied 2026-06-05; **still verify on hardware**, Procedure 5.A)
+- [x] Document the active-links/group rationale at the gate (inline comment in
+      `ad9176_init.c` referencing this issue)
 - [ ] Consider adding a `C_NUM_ACTIVE_GROUPS` generic to `JesdSyncController` in a future
       revision to suppress the inactive group from the `lmfc_aligned` computation
 
@@ -198,6 +174,10 @@ cycle, the error set takes priority and the clear is silently discarded.
 This means software cannot clear a `sync_err` bit while the underlying link fault is still
 active — which is the correct behavior. The interaction is not a bug, but it is not
 documented in the source and is not covered by any testbench.
+
+Note: the documentation action below would edit Phase A RTL, which CLAUDE.md §5 keeps
+unchanged at the source level. Treat as a deliberate exception if undertaken, or fold the
+note into a Phase B wrapper comment instead.
 
 **Action items:**
 - [ ] Add a comment to `p_err` explaining the last-assignment priority
@@ -270,90 +250,6 @@ The DBI port removal cascaded into edits to:
 
 ---
 
-## ISSUE-012: AD9176-FMC-EBZ board-mgmt signals routed to MAX10, not main FPGA
-
-**Date:** 2026-05-17
-**Module:** `projects/agilex5_devkit/agilex5_devkit.sv`, `agilex5_devkit.qsf`,
-`ip/dac_subsys/dac_subsys.tcl` (u_pg_c2m_pio instance)
-**Status:** Closed (Stage 4) — documented in
-[memory/project_fmc_max10_handoff.md](../../.claude/projects/d--Firmware-DevBoard-PhaseA/memory/project_fmc_max10_handoff.md)
-
-**Description:**
-On the DK-A5E065BB32AES1 dev kit, several FMC management signals defined by
-VITA 57.1 are routed to an on-board MAX10 board-management FPGA, **not** to
-the main Agilex 5 FPGA. Initial CLAUDE.md §2 architecture (Stage 4 plan)
-incorrectly assumed the main FPGA owned these. Confirmed routing:
-
-| Signal      | Main FPGA pin   | Owned by              |
-|-------------|-----------------|-----------------------|
-| `PRSNT_M2C_L` | PIN_K8        | **main FPGA** (input) |
-| `PG_M2C`      | n/a           | board-mgmt MAX10      |
-| `PG_C2M`      | n/a           | board-mgmt MAX10      |
-| `GA[1:0]`     | n/a           | board pull-ups only   |
-
-**Resolution applied (2026-05-17):**
-- Stage 4 SV top exports only `fmc_prsnt_n` (no `fmc_pg_m2c`, `fmc_pg_c2m`,
-  `fmc_ga`); qsf carries only `set_location_assignment PIN_K8 -to fmc_prsnt_n`
-  for housekeeping.
-- `dac_subsys` keeps the `u_pg_c2m_pio` instance internally so HPS can write
-  and read back the bit (dac_status_word[2] loopback); the conduit dangles
-  inside baseline_top because the FPGA package pin does not exist.
-- `dac_status_word[1]` (PG_M2C) and `dac_status_word[4:3]` (GA) are tied
-  to 0 in agilex5_devkit.sv with explanatory comments.
-
-**Impact:** None on Stage 4 verification — `PRSNT_N` is sufficient for the
-"AD9176 mezzanine present" indication used by the Stage 6 JESD bring-up
-handshake. The MAX10 likely handles PG_M2C/PG_C2M autonomously per the FMC
-spec; if Stage 5 or later finds firmware needs runtime visibility, the
-path is via the MAX10's own interface (SDM or board-mgmt path), not the
-FMC connector.
-
----
-
-## ISSUE-013: Stage 1 baseline retargeting dropped 48 HPS IO48 pin locations
-
-**Date:** 2026-05-17
-**Module:** `projects/agilex5_devkit/agilex5_devkit.qsf` (HPS Peripherals block)
-**Status:** Closed (Stage 4) — pin locations restored from upstream
-`legacy_baseline.qsf`
-
-**Description:**
-The upstream Stage 0 GHRD `baseline_a55.qsf` ships with IO_STANDARD,
-CURRENT_STRENGTH_NEW, and WEAK_PULL_UP_DN_SEL assignments for the 48 HPS
-IO48 peripheral pins (`hps_jtag_*`, `hps_sdmmc_*`, `hps_emac0_*`,
-`hps_spim0_*`, `hps_uart0_*`, `hps_i3c1_*`, `hps_trace_*`, `hps_gpio1_*`,
-`hps_osc_clk`) but **no** `set_location_assignment` lines for any of them.
-Stage 0 retargeting carried this gap into the Phase B repo's
-`agilex5_devkit.qsf` unchanged.
-
-Stages 1, 2, and 3 all used `quartus_sh -t build.tcl --project-only`
-(IP generation only) as their verify gate, so the fitter never ran on this
-project until Stage 4. The first full compile in Stage 4 surfaced the gap
-as `Error (171016): Can't place node ... -- illegal location assignment`
-and `Error (12677): No exact pin location assignment(s) for 48 pins of
-154 total pins` (PROMOTE_WARNING_TO_ERROR 12677 promotes the warning).
-
-**Resolution applied (2026-05-17):**
-Recovered all 48 HPS pin locations from
-`D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
-(same DK-A5E065BB32AES1 dev kit family, ES SR0 silicon) and inserted them
-into `agilex5_devkit.qsf` immediately before the existing `IO_STANDARD`
-block under `# HPS IO48 Peripherals`. Full Stage 4 fit then completed
-cleanly (WNS +1.731 ns, 0 errors).
-
-**Action items:**
-- [x] Restore HPS pin locations (Stage 4 close-out).
-- [ ] PLAN.md Stage 1 retro-fix: the verify gate should have included at
-      least one full `quartus_sh -t build.tcl` (not just `--project-only`)
-      to catch this class of gap before later stages compound it.
-- [ ] Confirm upstream `legacy_baseline.qsf` pin locations match the
-      `oobe/baseline_a55.qsf` ones on first hardware bring-up — both target
-      the same dev kit but if Altera's pinout was ever revised between
-      revisions, the legacy snapshot could diverge.
-
-
----
-
 ## ISSUE-014: GTS JESD204B IP on Agilex 5 ES SR0 silicon (Stage 5 merged)
 
 **Date:** 2026-05-17
@@ -388,55 +284,10 @@ in the IP descriptor.
 - [x] First full compile (2026-05-18): 0 errors, 41 warnings; none flag
       `IP_NOT_PRODUCTION_READY` for the GTS JESD204B IP. Timing met with
       WNS = +1.806 ns. 222 synchronizer chains, worst-case MTBF 1e+09 yr.
+- [x] Rebuild on 26.1 (2026-06-04): 0 errors; Fitter Successful, WNS
+      +1.501 ns; assembler clean (time-limited SOF, ISSUE-016).
 - [ ] First hardware bring-up: confirm PLL_LOCKED + LANE_READY come up
       stable on both links.
-
----
-
-## ISSUE-015: Cross-tile transceiver refclk routing (UX 4B GBTCLK0 -> UX 4C SERDIN lanes)
-
-**Date:** 2026-05-17
-**Module:** Agilex 5 GTS PMA, FMC SERDIN[4..7] (UX 4C bank) sourced from
-GBTCLK0 (UX 4B refclk pad)
-**Status:** Closed (Stage 5 merged, 2026-05-18) — resolved by adding GBTCLK1
-(UX 4C refclk pad, FPGA AV16/AV21) as a second refclk wired to
-u_jesd_link1. The Fitter rejected the single-refclk topology with
-`Error (175001): The Fitter cannot place 1 IPFLUXTOP_UXTOP_WRAP, which is
-within Generic Component dac_subsys_u_jesd_link1` + `Error (175006): There
-is no routing connectivity between the IPFLUXTOP_UXTOP_WRAP and
-destination pin` — confirming cross-tile refclk routing is NOT supported
-on Agilex 5 GTS. After adding GBTCLK1 the periphery placement succeeded.
-
-**Description:**
-The AD9176-FMC-EBZ feeds GBTCLK0 to FMC pin BR40 (FPGA pad AP16/AP21),
-which is on the Agilex 5 UX 4B HSST refclk pad. The 8 SERDIN lanes split
-across UX 4B (lanes 0..3 + lane 4 on BE7/BE10) and UX 4C (lanes 5..7 on
-BC/BA/AW). Whether the Agilex 5 GTS supports cross-tile PMA refclk
-routing (UX 4B refclk feeding UX 4C transceiver PLL) is undocumented in
-the Quartus 26.1 IP wizard text; in some Intel/Altera transceiver
-families this requires a dedicated refclk per tile.
-
-**Watch for:**
-- Fitter error: "transceiver reference clock cannot reach instance X" or
-  similar at first full compile.
-- Quartus 26.1 GTS IP user guide section on multi-tile refclk topology
-  (consult before debugging in fitter).
-
-**Resolution path:**
-- If cross-tile refclk works: close this issue with a one-line note.
-- If it doesn't: add a second refclk input on UX 4C. The FMC also exposes
-  `GBTCLK1_M2C` (pins B20/B21); FPGA pad assignment TBD from
-  AD9176_Dev_Pinout.txt. Add `fmc_gbtclk1_p/n` SV port + qsf pin
-  assignment + a second `u_xcvr_refclk_4c` clock_bridge inside dac_subsys
-  + route to `u_jesd_link1.pll_refclk`.
-
-**Action items:**
-- [x] First full compile: confirmed cross-tile refclk is NOT supported
-      (Error 175001/175006 on u_jesd_link1).
-- [x] Dual-refclk path implemented: GBTCLK1 -> FPGA AV16/AV21 (UX 4C),
-      `u_xcvr_refclk_4c` clock_bridge added in dac_subsys, fed to
-      `u_jesd_link1.pll_refclk`. Periphery placement passes on the second
-      full compile (2026-05-18).
 
 ---
 
@@ -493,96 +344,6 @@ the exit code was 1 even on otherwise-clean builds.
 
 ---
 
-## ISSUE-017: Phase A `iq_router_regs.h` is stale; new `dac_subsys_regs.h` is the source of truth
-
-**Date:** 2026-05-20
-**Module:** `software/ad9176_config/` (PLAN.md Stage 7 reg-audit task)
-**Status:** Closed -- new header `software/ad9176_config/dac_subsys_regs.h`
-authored against `dac_controller_pkg.vhd` constants. The Phase A
-reference at `software/ad9176_config/reference/iq_router_regs.h` is
-retained for traceability but is NOT used by Phase B code.
-
-**Audit findings (2026-05-20):**
-
-Phase A's `iq_router_regs.h` was authored against the older `IqRouterPkg`
-register map, which used a wider address space and merged the SPI master
-into the same IP. Phase B's `reg_bank.vhd` uses a 10-bit address space
-(1 KB) and the SPI master is a separate IP at LWS2F+0x1000. Concrete
-drift:
-
-| Symbol | Phase A iq_router_regs.h | Phase B reg_bank.vhd | Resolution |
-|--------|--------------------------|----------------------|------------|
-| `REG_JESD_SYNC_CTRL`    | `0x0320` | `0x020` | new header |
-| `REG_JESD_SYNC_STATUS`  | `0x0324` | `0x024` | new header |
-| `REG_JESD_SYNC_ERR`     | `0x0328` | `0x028` | new header |
-| `REG_JESD_TX_SRC_SEL`   | `0x0330` | `0x030` | new header |
-| `REG_JESD_TX_SRC_STAT`  | `0x0334` | `0x034` | new header |
-| `REG_SINE_CTRL`         | `0x0400` | `0x040` | new header |
-| `REG_SINE_FREQ_CH1_I`   | `0x0410` | `0x050` | new header |
-| ... (all SINE_*)        | `0x041x`..`0x043x` | `0x05x`..`0x07x` | new header |
-| `REG_SPI_CTRL`/`STATUS` | inside iq_router 0x0500 | separate IP at LWS2F+0x1000 | new SPI driver |
-| `SPI_MAP_BASE`          | `0x2000`..`0x3FFF` | n/a (Altera Avalon-MM SPI Master used instead) | rewritten |
-
-**Resolution path:**
-- New header `software/ad9176_config/dac_subsys_regs.h` matches
-  `reg_bank.vhd` exactly (manual cross-check 2026-05-20).
-- Phase A `iq_router_regs.h` left in `reference/` directory; not in
-  Stage 7 build paths.
-- `software/ad9176_config/ad9176_fmc_ebz.c` provides a new SPI
-  transport on top of the Altera Avalon-MM SPI Master CSR (24-bit
-  full-duplex single-frame transactions).
-
-**Action items:**
-- [x] Audit complete; ISSUE closed.
-- [ ] On any future `reg_bank.vhd` edit: re-audit `dac_subsys_regs.h`
-      against the updated case statement before the next firmware build.
-
----
-
-## ISSUE-018: dac_status_word concat missed one reserved bit; fmc_ready was at bit 4 vs documented bit 5
-
-**Date:** 2026-05-20
-**Module:** `projects/agilex5_devkit/agilex5_devkit.sv` (Stage 5 merged)
-**Status:** Closed -- single-line fix in agilex5_devkit.sv (`1'b0` ->
-`2'b00`) brings the hardware status word into agreement with the
-documented bit layout that CLAUDE.md, dac_subsys_regs.h, and the
-comment block above the assignment all already specified.
-
-**Description:**
-The original Stage 5 assignment was:
-
-    assign dac_status_word = {26'd0, fmc_ready_internal, 1'b0,
-                              fmc_pg_c2m_drive, 1'b0, ~fmc_prsnt_n};
-
-26 + 1 + 1 + 1 + 1 + 1 = 31 bits, assigned to a 32-bit wire with
-implicit zero-extend on the MSB. The documented bit layout (see the
-comment block at the same line) reserves a TWO-bit slot at [4:3] for
-the unused GA[1:0] FMC sideband. The concat only had ONE 1'b0 there,
-so fmc_ready landed at bit 4 instead of bit 5.
-
-Software impact (would have been silent at runtime):
-- `software/ad9176_config/dac_subsys_regs.h` defined
-  `DAC_STATUS_FMC_READY_BIT = 5`, matching the documented layout.
-- `ad9176_wait_fmc_ready()` would have polled bit 5 forever; the
-  AD9176 bring-up would have been stuck at the very first gate.
-
-**Detection:** caught by Stage 8b's `dac_subsys_tb.sv` T1: after
-dropping `fmc_prsnt_n` in sim, the test polled `dac_status_pio`
-expecting bit 5 to assert. After 200 polls (well past the 32-cycle
-handshake hold-off) the read returned `0x11` -- bits 0 and 4 -- not
-bit 5. Bit-counting the concat revealed the shift.
-
-**Fix:** `1'b0` -> `2'b00` in the reserved [4:3] slot of the concat.
-`dac_subsys_tb` T1 then passes; T6 (re-read stickiness) passes;
-no other software changes needed because both `dac_subsys_regs.h` and
-CLAUDE.md were already specifying the correct (documented) layout.
-
-**Regression protection:** `dac_subsys_tb` T1 is now the regression
-gate. Any future status-word concat change must keep `dac_subsys_tb`
-green (Procedure 8.C in integration.md).
-
----
-
 ## ISSUE-019: JESD204B GTS IPs are missing a GTS Reset Sequencer driver
 
 **Date:** 2026-05-21
@@ -626,7 +387,8 @@ ports floating.
 **Detection:** Stage 9 elaborate-only run on 2026-05-21 (no source
 changes since commit `804b6f1`); the DRC report was already produced
 by the Stage 5 fit but was not surfaced until Stage 9 hygiene swept
-the reports.
+the reports. Reproduced on Quartus 26.1 on 2026-06-04 (IPC-40028/30/36
+= 2/16/1 in the partitioned DRC; FLP-10500 = 3 in the synthesized DRC).
 
 **Workaround in simulation:** none required. Stage 8b
 `dac_subsys_tb.sv` does not exercise the JESD link layer, so the
@@ -707,19 +469,81 @@ Procedure 5.A without this fix. The exact behaviour is PLL/PCS-stack
 dependent; the AD9176 side will not see ILAS, SYNC stays asserted from
 the FPGA side, and `jesd_sync_status` reads all zeros.
 
-**Related fixes already applied (2026-06-03, commitable now, independent
-of the sequencer):**
+**Related fixes already applied (2026-06-03, committed `f8d7aa5`,
+independent of the sequencer; validated on the 26.1 build 2026-06-04):**
 
 - [projects/agilex5_devkit/sdc/fmc_io.sdc](../projects/agilex5_devkit/sdc/fmc_io.sdc):
   added `set_false_path -from [get_ports fmc_prsnt_n]` -- clears the only
-  **High** signoff finding, TMC-20011 (Missing Input Delay). Independent
-  of ISSUE-019.
+  **High** signoff finding, TMC-20011 (Missing Input Delay): confirmed 0
+  on the 26.1 build. Independent of ISSUE-019.
 - [projects/agilex5_devkit/sdc/jesd_cdc.sdc](../projects/agilex5_devkit/sdc/jesd_cdc.sdc):
   replaced the `*u_clk_bridge_axi*` / `*u_clk_bridge_jesd*` clock-group
   filters (which matched zero clocks -- a clock bridge does not create a
   named clock) with the real clock names: fabric `...|u_sys_pll|
   iopll_0_outclk0`, `fmc_gbtclk0/1`, and `*u_dac_subsys|u_jesd_link0/1*`.
-  This actually applies the JESD<->AXI async grouping required by CLAUDE.md
-  s6 #8 and clears STA 332174/332049 + the matching TMC-20025/20026 lines.
-  Re-confirm the group members are non-empty after step 4 above.
+  This applies the JESD<->AXI async grouping required by CLAUDE.md s6 #8
+  and cleared the STA 332174/332049 clock-bridge warnings + the matching
+  TMC-20025/20026 lines (TMC-20026 went 5->3, TMC-20025 6->5). On the
+  26.1 build the new grouping is currently flagged "fully overridden"
+  (the GTS IP's own SDC already covers those paths) -- benign; re-confirm
+  the group members are non-empty after step 4 above, once the txphy_clk
+  loopback is a real clock.
 
+---
+
+## Closed Issues (archived)
+
+Resolved issues are condensed here; the `## ISSUE-NNN: ...` headings are kept
+verbatim so existing `#issue-NNN-...` anchor links in CLAUDE.md, PLAN.md, and
+the other docs still resolve. Full detail is in git history
+(`git log -- doc/potential_issues.md`). (ISSUE-002, ISSUE-003, and ISSUE-018
+were closed and unreferenced, so they were dropped entirely; see git history.)
+
+## ISSUE-005: JesdSyncController — Transient Link Glitch Recovery (Fixed)
+
+**Closed (Fixed, 2026-03-16).** `ST_ERROR` was changed to an unconditional
+single-clock transition to `ST_WAIT_LOCK`, so a 1-clock glitch on `txlink_ready`
+can no longer deadlock the FSM; the sticky error flag (`p_err`) is preserved for
+observability. Verified by TB-SYNC-005.
+
+## ISSUE-006: Platform Designer Component Ports for `dac_controller_0`
+
+**Closed (2026-06-04).** `ip/dac_controller_0/dac_controller_0_hw.tcl` exports the
+full `dac_controller_0` port list (JESD `jesd_link0/1_data` streaming, `lwhpm2fpga`
+AXI4, `jesd_tx_link_clk`, and all status/conduit ports). Confirmed by a clean
+synth/fit/asm of the full design on Quartus 26.1.
+
+## ISSUE-012: AD9176-FMC-EBZ board-mgmt signals routed to MAX10, not main FPGA
+
+**Closed (Stage 4, 2026-05-17).** On the DK-A5E065BB32AES1, PG_M2C / PG_C2M / GA are
+owned by the on-board MAX10 board-management FPGA, not the main Agilex; only
+`PRSNT_M2C_L` (PIN_K8) reaches the main FPGA. The SV top exports just `fmc_prsnt_n`;
+`u_pg_c2m_pio` is kept internally as an HPS-readable loopback (`dac_status_word[2]`),
+and PG_M2C / GA bits are tied to 0. See also
+[memory/project_fmc_max10_handoff.md](../../.claude/projects/d--Firmware-DevBoard-PhaseA/memory/project_fmc_max10_handoff.md).
+
+## ISSUE-013: Stage 1 baseline retargeting dropped 48 HPS IO48 pin locations
+
+**Closed (Stage 4, 2026-05-17).** The upstream `baseline_a55.qsf` shipped IO_STANDARD /
+drive / pull-up assignments for the 48 HPS IO48 peripheral pins but no
+`set_location_assignment` lines; Stages 1–3 (project-only verify) never ran the fitter,
+so the gap surfaced as Error 12677 in the first Stage 4 full compile. All 48 pin
+locations were recovered from the upstream `legacy_baseline.qsf` and inserted into
+`agilex5_devkit.qsf`; Stage 4 fit then passed (WNS +1.731 ns).
+
+## ISSUE-015: Cross-tile transceiver refclk routing (UX 4B GBTCLK0 -> UX 4C SERDIN lanes)
+
+**Closed (Stage 5 merged, 2026-05-18).** The single-refclk topology (GBTCLK0 on UX 4B
+feeding both tiles) was rejected by the Fitter (Error 175001/175006), confirming Agilex 5
+GTS cannot route a refclk across transceiver tiles. Resolved by adding GBTCLK1 (UX 4C
+pad AV16/AV21) → `u_xcvr_refclk_4c` clock bridge → `u_jesd_link1.pll_refclk`; periphery
+placement then passed.
+
+## ISSUE-017: Phase A `iq_router_regs.h` is stale; new `dac_subsys_regs.h` is the source of truth
+
+**Closed (2026-05-20).** New header `software/ad9176_config/dac_subsys_regs.h` was authored
+against `reg_bank.vhd` (10-bit / 1 KB map, with the SPI master as a separate IP at
+LWS2F+0x1000), replacing Phase A's `iq_router_regs.h` (wider map, merged SPI). The Phase A
+header is retained at `software/ad9176_config/reference/iq_router_regs.h` for traceability
+only and is not in the Stage 7 build paths. Re-audit `dac_subsys_regs.h` on any future
+`reg_bank.vhd` edit.

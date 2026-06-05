@@ -113,8 +113,18 @@ int dac_subsys_wait_link_lock(const ad9176_ctx_t *ctx, unsigned timeout_ms)
         uint8_t grp   = (uint8_t)((s & SYNC_STATUS_GROUP_SYNCED_MASK) >>
                                   SYNC_STATUS_GROUP_SYNCED_SHIFT);
         uint8_t lmfc  = (uint8_t)((s >> SYNC_STATUS_LMFC_ALIGNED_BIT) & 1u);
-        if (txrdy == 0x0F && grp == 0x3 && lmfc) {
-            printf("JESD sync OK (status=0x%08X)\n", s);
+        /* ISSUE-009: the single-AD9176-FMC-EBZ target populates only links
+         * 0-1 (sync group 0); links 2-3 are tied low. txrdy therefore never
+         * reaches 0x0F, grp never reaches 0x3, and lmfc_aligned (which needs
+         * BOTH groups RUNNING) is permanently 0 -- the old
+         * "txrdy==0x0F && grp==0x3 && lmfc" gate could never pass, so this
+         * loop always timed out. Gate on the ACTIVE links (0-1 => 0x3) and
+         * active group (group 0 => bit 0) only. VERIFY ON HARDWARE
+         * (Procedure 5.A); if a future board populates links 2-3, widen the
+         * masks to 0x0F / 0x03 and restore the lmfc_aligned check. */
+        if ((txrdy & 0x03u) == 0x03u && (grp & 0x01u)) {
+            printf("JESD sync OK (status=0x%08X txrdy=0x%X grp=0x%X lmfc=%u)\n",
+                   s, (unsigned int)txrdy, (unsigned int)grp, (unsigned int)lmfc);
             return AD9176_OK;
         }
         msleep(1);
