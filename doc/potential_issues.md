@@ -72,9 +72,19 @@ register access), but should be confirmed.
 3. **Always-OKAY response:** `bresp` and `rresp` are hardwired to `"00"`. If the HPS expects
    error responses for unmapped addresses, this will not be provided.
 
+**Risks (added 2026-06-05 design review):**
+4. **AW-before-W deadlock:** `AxiToAvmm` S_IDLE accepts a write only when `awvalid` AND
+   `wvalid` are both high in the same cycle (`axi_to_avmm.vhd:141`). A compliant AXI
+   master that waits for `awready` before driving `wvalid` (legal AXI) would deadlock —
+   the bridge never asserts `awready` until `wvalid` is high. The LWH2F bridge issues
+   AW+W together so this is practically safe, but it is an unverified dependency.
+5. **Burst length ignored:** `awlen`/`arlen` are not checked; a burst read returns one
+   beat with `rlast` and would hang a master expecting `arlen+1` beats.
+
 **Action items:**
 - [ ] Confirm lwhpm2fpga always issues single-beat transactions for register access
 - [ ] Confirm HPS AXI master does not require error responses for unmapped addresses
+- [ ] Confirm the HPS master asserts AW+W together (else the bridge deadlocks; risk 4)
 
 ---
 
@@ -411,6 +421,22 @@ exceptions then target empty collections (signoff DRC **TMC-20025 x3 /
 TMC-20026 x3**). All of these self-heal once the sequencer makes the
 JESD datapath real -- they are symptoms, not independent bugs.
 
+**Correction (2026-06-05 design review):** the "jesd_sync_status reads all
+zeros" / data-not-released behaviour is **NOT** a symptom that self-heals with
+the reset sequencer. It has a separate root cause — `jesd_stub` drove the
+controller's `frame_ready` to constant `'0'`, so `data_release` and the FPGA
+sync status were dead regardless of the PMA/reset-sequencer state. See
+**ISSUE-020** (interim fix applied; permanent GTS-status rewire deferred). The
+FLP-10500 / TMC-2002x sysref/sync findings above do still self-heal with the
+sequencer; the sync-status/data-release path does not.
+
+**Clock-bootstrap caveat (2026-06-05):** the JESD-domain reset bridges
+(`u_rst_bridge_jesd`, `u_rst_bridge_jesd_n`) are clocked by the GTS-sourced
+`txphy_clk[0]` loopback, so the resets that release the GTS depend on a clock the
+GTS only produces once released. This is the usual transceiver pattern (txphy_clk
+is PMA-sourced ahead of the TX datapath reset), but validate it explicitly when
+the sequencer lands.
+
 **Corrected scope (the earlier "one IP + 3 connections" estimate was
 wrong).** The authoritative reference is Altera's own example-design
 generator for this exact IP:
@@ -491,6 +517,204 @@ independent of the sequencer; validated on the 26.1 build 2026-06-04):**
 
 ---
 
+## ISSUE-020: JESD link-ready feedback hardwired to '0' — transport never releases data
+
+**Date:** 2026-06-05
+**Module:** `ip/jesd_stub/src/jesd_stub.vhd`, `ip/dac_subsys/dac_subsys.tcl`,
+`ip/dac_controller_0/src/dac_controller_0.vhd` (read-only), `ad9176_init.c`
+**Status:** Open — **interim fix applied 2026-06-05**; permanent fix (wire real
+GTS status) deferred to the build machine. Found in the 2026-06-05 Phase B design
+review ([design_review_phaseB.md](design_review_phaseB.md) CRITICAL-1).
+
+**Description:**
+Stage 5 (merged) connected the GTS IP data sinks (`jesd204_tx_link`) but left
+`u_dac_controller_0.jesd_link0/1_status` wired to `u_jesd_stub`, which drove
+`frame_ready <= '0'`. That signal feeds `txlink_ready` →
+`JesdSyncController.grp0_release` → the `tx_link_valid` gate
+(`lane_valid and data_release`). With `frame_ready` constant-low, `JesdSyncController`
+never reached `ST_RUNNING`, `data_release` never asserted, and **`tx_link_valid` was
+permanently 0 — no sample data was ever streamed to the GTS IPs**, even on working
+hardware. The software lock poll (`dac_subsys_wait_link_lock()` reading
+`REG_JESD_SYNC_STATUS`) reads the same stubbed path, so it could never pass.
+
+**Not the same as ISSUE-019.** ISSUE-019's "self-heal once the sequencer makes the
+JESD datapath real" claim does **not** apply to this path: `frame_ready` was a fabric
+constant, independent of the PMA / reset-sequencer state. The reset sequencer fix alone
+would not have released data.
+
+**Interim fix applied (2026-06-05):** `jesd_stub.vhd` now drives `frame_ready <= '1'`.
+With the real Intel GTS IP the transport must supply continuous data; the link layer
+(GTS IP) gates the wire via SYNC_N/ILAS, so the Phase A `data_release` interlock is
+redundant and is satisfied by the always-ready convention. Paired with the ISSUE-021
+fix (per-DAC sync mode), the active group now reaches `ST_RUNNING` and the FPGA gate is
+meaningful again. Software (`dac_subsys_wait_link_lock()`) additionally reads the
+AD9176's own `LINK_STATUS` (0x301) and logs it, so the bring-up engineer can confirm the
+physical link rather than trusting the FPGA transport-release indication alone.
+
+**Action items:**
+- [x] Unblock data release (stub `frame_ready <= '1'`; per-DAC sync mode) — 2026-06-05.
+- [x] Surface AD9176 `LINK_STATUS` in `dac_subsys_wait_link_lock()` — 2026-06-05.
+- [ ] **Permanent (build machine):** wire each GTS IP's real link-status output back into
+      `u_dac_controller_0.jesd_link*_status` and delete the stub's frame-ready/somf
+      drivers; re-run `qsys-generate` + fit + DRC. Needs the GTS IP status port names.
+- [ ] Confirm lane/frame alignment on hardware (Procedure 5.A): `somf` is not fed back to
+      the Phase A LMFC counter, so the transport multiframe boundary is free-running
+      relative to the GTS IP's framer.
+
+---
+
+## ISSUE-021: `dac_subsys_release_sync()` selected all-four sync mode (active group never syncs)
+
+**Date:** 2026-06-05
+**Module:** `software/ad9176_config/ad9176_init.c`
+**Status:** **Fixed 2026-06-05.** Found in the 2026-06-05 Phase B design review
+([design_review_phaseB.md](design_review_phaseB.md) CRITICAL-2).
+
+**Description:**
+`dac_subsys_release_sync()` wrote `REG_JESD_SYNC_CTRL = 0x1`, commented as "starts the
+sync controller state machine." Bit 0 is **not** a start bit — it is `sync_mode`
+(`reg_bank.vhd`), and `sync_mode = 1` selects **all-four mode**, which requires
+`txlink_ready(0..3)` all high. Links 2/3 are tied low on the single-AD9176 board, so
+this guaranteed the active group (links 0+1) never reached `ST_RUNNING` — independent of
+ISSUE-020. The `JesdSyncController` FSM auto-starts from reset; no release write is
+needed. The comment's "deasserts the SYNC_N output to the AD9176" was also wrong: the
+FPGA does not drive SYNC_N (it is an input from the AD9176 to the GTS IP).
+
+**Fix applied (2026-06-05):** write `0x0` (per-DAC mode, group 0 = links 0+1) and rewrite
+the comments to describe the mode select and the SYNC_N direction correctly.
+
+**Action items:**
+- [x] `REG_JESD_SYNC_CTRL = 0x0`; corrected comments — 2026-06-05.
+
+---
+
+## ISSUE-022: SYSREF 2-stage synchronizer defeats subclass-1 LMFC determinism
+
+**Date:** 2026-06-05
+**Module:** `projects/agilex5_devkit/src/sysref_capture.vhd`,
+`projects/agilex5_devkit/agilex5_devkit.sv`
+**Status:** Open — design review finding (HIGH-3); needs build + STA validation.
+
+**Description:**
+`sysref_capture.vhd` resynchronizes SYSREF through a 2-stage metastability synchronizer
+and feeds the result to both GTS IP `sysref` inputs. Subclass-1 deterministic latency
+requires SYSREF captured with a known, repeatable phase so the LMFC counter resets
+deterministically; a 2-FF synchronizer allows ±1 cycle of non-deterministic resolution,
+which defeats determinism on the FPGA side. This contradicts the subclass-1 goal in
+CLAUDE.md §6 #5 and architecture.md §6.
+
+**Resolution path:** bring SYSREF into the GTS IP's dedicated capture path (let the IP
+sample it on the link/device clock), or formally drop to subclass-0 (documented fallback
+in jesd_bringup_sequence.md). Validate with STA / `report_timing` on the SYSREF capture
+once the txphy_clk loopback is a real clock (gated on ISSUE-019).
+
+---
+
+## ISSUE-023: AD9176 4-wire SPI not enabled before first register read
+
+**Date:** 2026-06-05
+**Module:** `software/ad9176_config/ad9176_init.c`
+**Status:** **Fixed 2026-06-05.** Design review finding (MEDIUM-6).
+
+**Description:**
+`ad9176_verify_id()` reads CHIPTYPE/PRODID over the separate-MISO (4-wire) fabric SPI
+master right after reset, but the bring-up never configured `SPI_INTFCONFA` (reg 0x000)
+for SDO-active. The AD9176 powers up in 3-wire SDIO mode; unless the board straps 4-wire,
+the first read returns garbage and bring-up aborts at `verify_id`.
+
+**Fix applied (2026-06-05):** `ad9176_reset()` writes `0x18` (SDOACTIVE + mirror, same
+ADI mirrored-register convention as the `0x81` soft reset) to reg 0x000 after the
+soft-reset deassert, enabling 4-wire before any read. Confirm against the
+AD9176-FMC-EBZ SDO strap on hardware.
+
+**Action items:**
+- [x] Enable 4-wire in `ad9176_reset()` before `verify_id` — 2026-06-05.
+- [ ] Confirm the eval-board SDO strap on hardware (Procedure 7.A).
+
+---
+
+## ISSUE-024: GTS AVST backpressure (`jesd204_tx_link_ready`) is ignored
+
+**Date:** 2026-06-05
+**Module:** `ip/dac_controller_0/src/jesd_tx_manager.vhd`,
+`ip/dac_controller_0/src/dac_controller_0.vhd` (Phase A, frozen)
+**Status:** Open — design review finding (MEDIUM-5); cannot fix in frozen Phase A RTL.
+
+**Description:**
+The real GTS IP's `jesd204_tx_link_ready` is a live backpressure signal, but
+`dac_controller_0`'s `..._link_ready` input is unused and `JesdTxManager` drives
+`lane_valid <= samples_valid` unconditionally. If the GTS link layer ever deasserts
+ready, samples are dropped → frame slip. The Phase A comment ("no backpressure
+mechanism") was true against the stub, not against the real IP.
+
+**Resolution path:** confirm the GTS IP holds `tx_link_ready` continuously in this
+TX/PMA configuration (expected for a fixed-rate DAC sink). If not, add a transport-side
+elastic stage in Phase B glue (Phase A RTL stays frozen per CLAUDE.md §1/§5).
+
+---
+
+## ISSUE-025: One `txlink_clk` shared across two independent PMA tiles
+
+**Date:** 2026-06-05
+**Module:** `ip/dac_subsys/dac_subsys.tcl` (`u_jesd_link0`/`u_jesd_link1`)
+**Status:** Open — design review finding (MEDIUM-8); needs build/IP validation.
+
+**Description:**
+`u_jesd_link1` (UX 4C) takes its `txlink_clk` from `u_jesd_link0`'s (UX 4B)
+`txphy_clk[0]`. The two links have independent PMAs, PLLs, and refclk pads, so link 1's
+serializer clock and its `txlink_clk` are only mesochronous; this relies on link 1's TX
+phase-compensation FIFO to absorb the relationship.
+
+**Resolution path:** confirm the GTS IP instantiates a TX phase-compensation FIFO in this
+mode (default for most configurations); otherwise drive each link's `txlink_clk` from its
+own `txphy_clk[0]`. Validate on the build machine with `report_clocks` after ISSUE-019.
+
+---
+
+## ISSUE-026: FMC I/O assignment warnings (25315) — slew rate fixed, LVDS termination pending
+
+**Date:** 2026-06-08
+**Module:** `projects/agilex5_devkit/agilex5_devkit.qsf`
+**Status:** Partially fixed 2026-06-08 (output slew rate); LVDS input
+termination deferred pending board-schematic confirmation.
+
+**Description:**
+The full compile emits `Warning(25315)` (Some pins are missing drive strength,
+termination and/or slew rate). The I/O Assignment Warnings table in
+`output_files/agilex5_devkit.fit.rpt` pins it to two groups:
+
+| Pin(s) | Warning |
+|--------|---------|
+| `fmc_spi_sck/mosi/cs1_n/cs2_n/en`, `fmc_pe_ctrl`, `fmc_txen[0/1]` | Missing slew rate on output pin (default 1 used) |
+| `fmc_sysref`, `fmc_sync0`, `fmc_sync1` | Missing termination setting on input pin |
+
+`fmc_spi_miso` is correctly absent (input → no slew rate). The 8 outputs are the
+HSIO 3B 1.2-V SPI/control pins.
+
+**Fix applied (2026-06-08):** added `SLEW_RATE 1` to the 8 FMC HSIO outputs in
+`agilex5_devkit.qsf`. `1` is the value the Fitter was already applying by default,
+so the change is behaviour-neutral — it only makes the intent explicit and clears
+the output half of 25315.
+
+**Deferred — LVDS input termination:** `fmc_sysref/sync0/sync1` are
+"1.2-V TRUE DIFFERENTIAL SIGNALING" receivers. On-die 100 Ω differential
+termination (`set_instance_assignment -name INPUT_TERMINATION DIFFERENTIAL`) is the
+usual choice, **but only if the AD9176-FMC-EBZ does not already place external
+termination on those nets** — on-die termination in parallel with an external
+resistor halves the load and degrades SI. These are the HSIO 3B pins CLAUDE.md
+§6 #3/#5 flags as hardware-sensitive, so the value is held until the eval-board
+SYSREF/SYNC net termination is confirmed (Procedure 5.A). Note these three ports
+are also currently pruned as non-driving (ISSUE-019), so the termination warning
+persists regardless until the GTS datapath is real.
+
+**Action items:**
+- [x] Add explicit `SLEW_RATE 1` to the 8 FMC HSIO outputs — 2026-06-08.
+- [ ] Confirm AD9176-FMC-EBZ SYSREF/SYNC net termination, then add
+      `INPUT_TERMINATION` to `fmc_sysref/sync0/sync1` (or leave OFF if the board
+      terminates externally).
+
+---
+
 ## Closed Issues (archived)
 
 Resolved issues are condensed here; the `## ISSUE-NNN: ...` headings are kept
@@ -530,6 +754,17 @@ drive / pull-up assignments for the 48 HPS IO48 peripheral pins but no
 so the gap surfaced as Error 12677 in the first Stage 4 full compile. All 48 pin
 locations were recovered from the upstream `legacy_baseline.qsf` and inserted into
 `agilex5_devkit.qsf`; Stage 4 fit then passed (WNS +1.731 ns).
+
+**Clarification (2026-06-08):** these 48 `set_location_assignment` lines satisfy the
+`PROMOTE_WARNING_TO_ERROR 12677` gate (every top-level port needs a location) but are
+then *ignored by the Fitter* — the HPS hard IP owns the placement of its dedicated
+I/O, so each pin reports `Warning(15706)` ("assigned to location or region, but does
+not exist in design"), rolled up under `Warning(171167)` (invalid Fitter assignments).
+This is benign (the HPS places its own pins; the Linux EMAC/SD/UART/etc. peripherals
+work), but the 48+1 warnings are **expected** and must **not** be "cleaned up" by
+deleting the assignments — doing so re-fires Error 12677 and aborts the fit. Removing
+them cleanly would require confirming on the build machine whether Agilex 5 exempts
+HPS-connected ports from 12677.
 
 ## ISSUE-015: Cross-tile transceiver refclk routing (UX 4B GBTCLK0 -> UX 4C SERDIN lanes)
 

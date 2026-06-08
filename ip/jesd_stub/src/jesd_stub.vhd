@@ -118,14 +118,27 @@ architecture rtl of jesd_stub is
 begin
 
   -- =====================================================================
-  -- JESD link status: drive somf=0 and frame_ready=0
-  -- (frame_ready='0' keeps Phase A's JesdSyncController out of the
-  --  "links ready" state, which is the correct stubbed behaviour: no GTS,
-  --  no link.)
+  -- JESD link status: drive somf=0 and frame_ready=1.   (ISSUE-020)
+  --
+  -- Stage 5 (merged) wired the controller's AVST data paths to the real
+  -- Intel GTS JESD204B IPs, but left this status conduit on the stub. With
+  -- the real IP, the transport (dac_controller_0) must supply CONTINUOUS
+  -- data; the GTS link layer gates the wire itself via SYNC_N/ILAS. So
+  -- frame_ready MUST be '1' here, otherwise Phase A's JesdSyncController
+  -- never reaches ST_RUNNING, data_release stays low, and tx_link_valid is
+  -- never asserted -- no samples ever reach the GTS IP (the old '0' value
+  -- silently blocked the entire data path; see ISSUE-020).
+  --
+  -- This is an INTERIM fix. The architecturally clean version wires each
+  -- GTS IP's real link-status output back here and deletes these drivers;
+  -- that needs the GTS status port names + a qsys-generate/fit/DRC pass on
+  -- the build machine (ISSUE-020 permanent action item). somf stays 0 (the
+  -- controller's transport does not consume it; it runs its own LMFC
+  -- counter -- confirm frame alignment on hardware, Procedure 5.A).
   -- =====================================================================
   jesd_link0_status_somf        <= (others => '0');
-  jesd_link0_status_frame_ready <= '0';
-  jesd_link1_status_frame_ready <= '0';
+  jesd_link0_status_frame_ready <= '1';
+  jesd_link1_status_frame_ready <= '1';
 
   -- =====================================================================
   -- JESD reset sequencing:

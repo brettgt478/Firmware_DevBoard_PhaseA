@@ -542,6 +542,15 @@ set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_mosi
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_cs1_n
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_cs2_n
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_spi_en
+# Explicit slew rate on the HSIO 3B SPI outputs. SLEW_RATE 1 is the value the
+# Fitter was already applying by default (fit.rpt I/O Assignment Warnings);
+# stating it explicitly clears Warning(25315) without changing behaviour.
+# fmc_spi_miso is an input -- no slew rate. See doc/potential_issues.md ISSUE-026.
+set_instance_assignment -name SLEW_RATE 1 -to fmc_spi_sck
+set_instance_assignment -name SLEW_RATE 1 -to fmc_spi_mosi
+set_instance_assignment -name SLEW_RATE 1 -to fmc_spi_cs1_n
+set_instance_assignment -name SLEW_RATE 1 -to fmc_spi_cs2_n
+set_instance_assignment -name SLEW_RATE 1 -to fmc_spi_en
 
 # FMC control GPIOs (HSIO 3B 1.2-V, 8 mA drive)
 set_location_assignment PIN_M58 -to fmc_txen[0]
@@ -553,6 +562,11 @@ set_instance_assignment -name IO_STANDARD "1.2-V" -to fmc_pe_ctrl
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_txen[0]
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_txen[1]
 set_instance_assignment -name CURRENT_STRENGTH_NEW 8MA -to fmc_pe_ctrl
+# Explicit slew rate on the HSIO 3B control outputs (clears Warning(25315);
+# SLEW_RATE 1 = the prior default). See doc/potential_issues.md ISSUE-026.
+set_instance_assignment -name SLEW_RATE 1 -to fmc_txen[0]
+set_instance_assignment -name SLEW_RATE 1 -to fmc_txen[1]
+set_instance_assignment -name SLEW_RATE 1 -to fmc_pe_ctrl
 
 # FMC housekeeping (3.3-V LVCMOS)
 # PG_M2C and PG_C2M are routed to the board-mgmt MAX10 FPGA on this dev kit,

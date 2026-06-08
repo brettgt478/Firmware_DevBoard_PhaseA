@@ -94,7 +94,7 @@ The `u_dac_subsys` instance is built by the Tcl program at
 A IP is wrapped at
 [ip/dac_controller_0/dac_controller_0_hw.tcl](../ip/dac_controller_0/dac_controller_0_hw.tcl).
 
-### Known structural gap (ISSUE-019)
+### Known structural gaps (ISSUE-019, ISSUE-020)
 
 `u_jesd_link0` and `u_jesd_link1` are missing a `intel_gts_reset_sequencer`
 driver for their Control Unit Clock + request/grant ports. The fitter
@@ -102,6 +102,15 @@ completes regardless, but the Agilex 5 GTS Reset Sequencer User Guide
 mandates this IP for every shoreline-tile transceiver instance.
 Procedure 5.A will probably fail without it; the fix is small and
 contained (see [potential_issues.md ISSUE-019](potential_issues.md)).
+
+Separately, the controller's `frame_ready` link-status feedback was wired to
+`u_jesd_stub` (constant `'0'`), not to the real GTS IPs — so the transport
+never released data and the FPGA sync status was dead, independent of the
+reset sequencer. An interim fix (stub `frame_ready <= '1'`, so the transport
+free-runs and the GTS link layer gates the wire) is applied; the permanent fix
+wires real GTS link status back to the controller. See
+[potential_issues.md ISSUE-020](potential_issues.md) and the full
+[design_review_phaseB.md](design_review_phaseB.md).
 
 ---
 

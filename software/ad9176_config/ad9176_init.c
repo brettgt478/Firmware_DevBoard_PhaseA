@@ -31,6 +31,19 @@ int ad9176_reset(const ad9176_ctx_t *ctx)
         return rc;
     }
     msleep(2);
+
+    /* Enable 4-wire SPI before the first register READ (ISSUE-023). The
+     * AD9176 powers up in 3-wire SDIO mode, but the fabric SPI master is a
+     * separate-MISO (4-wire) controller, so reads return garbage until SDO
+     * is activated. Reg 0x000 = SPI_INTFCONFA, ADI mirrored convention:
+     * bit3 SDOACTIVE + bit4 SDOACTIVE(mirror) -> 0x18 (same mirrored scheme
+     * as the 0x81 soft-reset above). Writes work in 3-wire too, so this is
+     * safe to issue here. */
+    rc = ad9176_reg_write(ctx, AD9176_REG_SPI_INTFCONFA, 0x18);
+    if (rc != AD9176_OK) {
+        return rc;
+    }
+    msleep(1);
     return AD9176_OK;
 }
 
@@ -98,10 +111,16 @@ int ad9176_enable_link(const ad9176_ctx_t *ctx)
 
 int dac_subsys_release_sync(const ad9176_ctx_t *ctx)
 {
-    /* Phase A's REG_JESD_SYNC_CTRL bit 0 starts the sync controller
-     * state machine; once both links report ready it deasserts the
-     * SYNC_N output to the AD9176. */
-    ad9176_csr_write(ctx, DAC_CTRL_OFFSET + REG_JESD_SYNC_CTRL, 0x00000001);
+    /* REG_JESD_SYNC_CTRL bit 0 is NOT a "start" bit -- it is the sync-mode
+     * select in reg_bank.vhd (0 = per-DAC: group 0 = links 0+1; 1 = all-four:
+     * one group needs links 0..3). The JesdSyncController FSM auto-starts from
+     * reset, so no write is required to "release". On this single-AD9176 board
+     * links 2/3 are tied low, so we MUST stay in per-DAC mode (0): writing 1
+     * would demand links 2/3 and the active group could never sync (ISSUE-021).
+     * Note: the FPGA does not drive SYNC_N -- the AD9176 drives SYNC_N into the
+     * GTS IP -- so this write does not touch SYNC_N at all. Writing 0 explicitly
+     * documents the intended mode (also the reset default). */
+    ad9176_csr_write(ctx, DAC_CTRL_OFFSET + REG_JESD_SYNC_CTRL, 0x00000000);
     return AD9176_OK;
 }
 
@@ -114,23 +133,35 @@ int dac_subsys_wait_link_lock(const ad9176_ctx_t *ctx, unsigned timeout_ms)
                                   SYNC_STATUS_GROUP_SYNCED_SHIFT);
         uint8_t lmfc  = (uint8_t)((s >> SYNC_STATUS_LMFC_ALIGNED_BIT) & 1u);
         /* ISSUE-009: the single-AD9176-FMC-EBZ target populates only links
-         * 0-1 (sync group 0); links 2-3 are tied low. txrdy therefore never
-         * reaches 0x0F, grp never reaches 0x3, and lmfc_aligned (which needs
-         * BOTH groups RUNNING) is permanently 0 -- the old
-         * "txrdy==0x0F && grp==0x3 && lmfc" gate could never pass, so this
-         * loop always timed out. Gate on the ACTIVE links (0-1 => 0x3) and
-         * active group (group 0 => bit 0) only. VERIFY ON HARDWARE
-         * (Procedure 5.A); if a future board populates links 2-3, widen the
-         * masks to 0x0F / 0x03 and restore the lmfc_aligned check. */
+         * 0-1 (sync group 0); links 2-3 are tied low. So gate on the ACTIVE
+         * links (0-1 => 0x3) and active group (group 0 => bit 0) only; do not
+         * require lmfc_aligned (needs BOTH groups RUNNING -> always 0 here).
+         *
+         * ISSUE-020: this FPGA status only proves the dac_controller_0
+         * TRANSPORT released data (its frame_ready feedback came from the
+         * jesd_stub, not the GTS IP). It does NOT prove the AD9176 achieved
+         * code-group sync. We read the AD9176's own LINK_STATUS (0x301) below
+         * and print it so the bring-up engineer can confirm the physical link
+         * on hardware (Procedure 5.A). Once the GTS link-status conduit is
+         * wired back to the controller (ISSUE-020 permanent fix), this gate
+         * becomes a true link-up indication. */
         if ((txrdy & 0x03u) == 0x03u && (grp & 0x01u)) {
-            printf("JESD sync OK (status=0x%08X txrdy=0x%X grp=0x%X lmfc=%u)\n",
-                   s, (unsigned int)txrdy, (unsigned int)grp, (unsigned int)lmfc);
+            uint8_t ad_ls = 0;
+            (void)ad9176_reg_read(ctx, AD9176_REG_LINK_STATUS, &ad_ls);
+            printf("JESD transport released (status=0x%08X txrdy=0x%X grp=0x%X "
+                   "lmfc=%u); AD9176 LINK_STATUS(0x301)=0x%02X -- confirm "
+                   "code-group sync on hardware (ISSUE-020)\n",
+                   s, (unsigned int)txrdy, (unsigned int)grp,
+                   (unsigned int)lmfc, (unsigned int)ad_ls);
             return AD9176_OK;
         }
         msleep(1);
     }
     uint32_t s = ad9176_csr_read(ctx, DAC_CTRL_OFFSET + REG_JESD_SYNC_STATUS);
-    fprintf(stderr, "JESD link-lock timeout (status=0x%08X)\n", s);
+    uint8_t ad_ls = 0;
+    (void)ad9176_reg_read(ctx, AD9176_REG_LINK_STATUS, &ad_ls);
+    fprintf(stderr, "JESD link-lock timeout (status=0x%08X, "
+            "AD9176 LINK_STATUS=0x%02X)\n", s, (unsigned int)ad_ls);
     return AD9176_ERR_NOT_READY;
 }
 
