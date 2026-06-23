@@ -330,3 +330,35 @@ Each entry:
   outcome without the fix: the link never PLL-locks, GTS CSR reads all
   zero. Apply the fix per ISSUE-019, rebuild, re-run, and confirm
   IPC-40028/30/36 = 0 and FLP-10500 = 0.
+
+---
+
+## Cross-stage — Deployable boot image / bootloader integration
+
+### Bootloader integration: bare `.sof` does not boot Linux
+
+- **What was deferred**: producing and programming a *bootable* image.
+  `build.tcl` stops at `output_files/agilex5_devkit.sof`, which carries the
+  FPGA fabric + HPS handoff but **no FSBL/U-Boot SPL**. On this HPS-first kit
+  (`HPS_INITIALIZATION "HPS FIRST"`, `QSPI_OWNERSHIP HPS`) the SDM has nothing
+  to boot, so the bare `.sof` configures the fabric but never starts the HPS.
+  The deployable image = bitstream + Yocto-built FSBL merged via
+  `quartus_pfg -o hps_path=u-boot-spl-dtb.hex`, programmed to **QSPI** as a
+  `.jic`; the fabric `core.rbf`, kernel, and rootfs ride on the SD card.
+- **Why deferred**: needs (a) a Linux Yocto build host for the BSP, and
+  (b) the dev kit on the bench to flash QSPI/SD and watch the UART. Neither is
+  the Windows firmware workstation.
+- **Why it surfaced**: baseline GSRD image (with bootloader) boots Linux;
+  swapping in *only* the FPGA fabric leaves the **baseline** SDM+FSBL+handoff
+  in QSPI — a mismatch with this design's DDR4-1600 EMIF retarget
+  ([ISSUE-011](potential_issues.md)), so Linux never comes up.
+- **Software substitute**: none — boot is inherently hardware. The build-side
+  artifacts (Yocto recipes, `qspi_helper.pfg`/`qspi_boot.pfg`,
+  `swbuild_config.mk` merge targets) are present and reviewed.
+- **Procedure when hardware available**: see
+  [integration.md → Deployable boot image](integration.md#deployable-boot-image--integrating-the-bootloader-read-first-if-linux-wont-boot)
+  (Procedures D.A fast recovery, D.B full Yocto build, D.C SD card).
+- **Unblock when**: Linux Yocto host provisioned; QSPI `.jic` rebuilt from
+  *this* design's `.sof` with the FSBL merged; programmed to QSPI (MSEL =
+  ASX4); SD card carries matching `ghrd.core.rbf` + kernel + rootfs; UART
+  reaches the `login:` prompt.

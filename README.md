@@ -42,6 +42,13 @@ The bitstream lands at
 evaluation mode -- see
 [doc/potential_issues.md ISSUE-016](doc/potential_issues.md)).
 
+> **This `.sof` is NOT bootable on its own.** It contains the FPGA fabric
+> and HPS handoff but **no bootloader (FSBL / U-Boot SPL)**. This is an
+> HPS-first kit, so a bare `.sof` configures the fabric but the HPS will not
+> boot Linux. To build a bootable QSPI image (bitstream + FSBL merged via
+> `quartus_pfg -o hps_path=…`) and program it, follow
+> [doc/integration.md → Deployable boot image](doc/integration.md#deployable-boot-image--integrating-the-bootloader-read-first-if-linux-wont-boot).
+
 ### Run the regression suites
 
 ```bash

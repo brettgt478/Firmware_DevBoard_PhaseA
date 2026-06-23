@@ -36,6 +36,268 @@ Confirm VADJ before any image touches the FMC.
 
 ---
 
+## Deployable boot image — integrating the bootloader (READ FIRST if Linux won't boot)
+
+This section explains how to turn the `build.tcl` FPGA bitstream into an
+image the board can actually **boot Linux** from, and why the bare `.sof`
+cannot. It is a prerequisite for every procedure below that boots Linux or
+runs `ad9176-config` (Procedures 1.A, 5.A, 7.A).
+
+> **TL;DR for "baseline boots, my build doesn't":** `build.tcl` produces only
+> `output_files/agilex5_devkit.sof`, which has **no HPS bootloader (FSBL /
+> U-Boot SPL) in it**. On this HPS-first kit the SDM has nothing to execute,
+> so the HPS never boots. The deployable image is the bitstream **plus** the
+> Yocto-built FSBL, merged with `quartus_pfg -o hps_path=…` and programmed to
+> **QSPI** as a `.jic`. Jump to [Procedure D.A](#procedure-da--fast-recovery-re-merge-fsbl-rebuild-qspi-image-reflash).
+
+### D.0 — Why a bare `.sof` never boots Linux on this kit
+
+This design is **HPS-first** (`HPS_INITIALIZATION "HPS FIRST"`,
+`QSPI_OWNERSHIP HPS` in
+[agilex5_devkit.qsf](../projects/agilex5_devkit/agilex5_devkit.qsf)). On
+Agilex 5 the boot chain is:
+
+```
+Power-on
+  │
+  ▼
+SDM (Secure Device Manager) ── boot device = QSPI flash (active-serial x4 / ASX4)
+  │   • configures HPS EMIF I/O + HPS pins from the bitstream handoff
+  │   • copies the FSBL *code* + the HW *handoff* binary into HPS on-chip RAM
+  ▼
+FSBL = U-Boot SPL (u-boot-spl-dtb.hex)  ── brings up DDR4, then loads ↓
+  ▼
+BL31 = Arm Trusted Firmware (bl31.bin)
+  ▼
+SSBL = U-Boot proper (u-boot.itb)       ── SSBL_BOOT_SOURCE=mmc0 → loads ↓ from SD
+  │   • load mmc 0:1 … ghrd.core.rbf ; fpga load 0 …   (configures FPGA fabric)
+  │   • bridge enable ; boot kernel
+  ▼
+Linux (Image / kernel.itb) + rootfs (SD)
+```
+
+Two facts make the bare `.sof` a dead end:
+
+1. **The FSBL is *software*, not in the bitstream.** `build.tcl` runs
+   `quartus_asm` and stops at `output_files/agilex5_devkit.sof`. That `.sof`
+   carries the FPGA fabric **and the HPS hardware handoff**, but it does
+   **not** contain the U-Boot SPL. The SPL is built by Yocto and must be
+   *merged into* the bitstream with `quartus_pfg -o hps_path=u-boot-spl-dtb.hex`.
+   Without that merge the SDM has no FSBL to copy into OCRAM → the HPS never
+   executes a boot instruction → no U-Boot banner, no Linux. The FPGA fabric
+   still configures, so the heartbeat LED can blink — which is misleading.
+
+2. **The HPS handoff lives in the bitstream, and you changed it.** For
+   Agilex 5 the entire HPS handoff (EMIF timing, pin mux, clocks, HPS↔FPGA
+   bridge widths) is baked into the configuration bitstream by Quartus —
+   there is no separate handoff folder and no `bsp-editor` step. Phase B
+   retargeted the EMIF from DDR4-3200 to **DDR4-1600 @ 800 MHz**
+   ([ISSUE-011](potential_issues.md)). That timing is in *this* design's
+   bitstream only. Booting the **baseline** QSPI image (baseline handoff)
+   against this design is a mismatch.
+
+**The reported symptom maps to fact #2:** the baseline SDM+FSBL image is
+still in QSPI and only the FPGA fabric was swapped, so the board boots the
+**baseline** handoff, not this design's. The fix is to rebuild the QSPI boot
+image from *this* `.sof` (with the FSBL merged) and reflash QSPI.
+
+### D.0.1 — The artifacts and where they live (this kit: QSPI `.jic` + rootfs on SD)
+
+| Artifact | Made by | Carries | Lives on |
+|----------|---------|---------|----------|
+| `qspi_helper.hps.jic` (+ `.rpd`) | `quartus_pfg` + [qspi_helper.pfg](../projects/agilex5_devkit/software/yocto_linux/scripts/qspi_helper.pfg) | SDM firmware + **this design's bitstream/handoff** + **FSBL** + U-Boot proper | **QSPI flash** |
+| `ghrd.core.rbf` | `quartus_pfg … -o hps_core_only=ON` | FPGA **fabric only** (DAC subsys, JESD, FMC) | **SD FAT** — U-Boot `fpga load`s it |
+| `Image` / `kernel.itb`, `*.dtb` | Yocto | Linux kernel + device tree | **SD FAT** |
+| rootfs (`.wic` / ext4) | Yocto | Root filesystem (+ `ad9176-config`) | **SD ext4** |
+
+In this kit's mode the QSPI image is the **U-Boot-only** `qspi_helper`
+variant (SDM + bitstream + FSBL + U-Boot proper). U-Boot then loads the
+fabric `ghrd.core.rbf`, the kernel and the rootfs from the SD card. (The
+full-QSPI alternative — kernel+rootfs in a QSPI UBI image via
+[qspi_boot.pfg](../projects/agilex5_devkit/software/yocto_linux/scripts/qspi_boot.pfg)
+— is *not* this kit's configuration and is left to the
+`software-yocto_linux_qspi` make target.)
+
+### Procedure D.A — Fast recovery (re-merge FSBL, rebuild QSPI image, reflash)
+
+Use this when Linux stopped booting after a bitstream swap and you already
+have a known-good set of Yocto boot binaries (from the baseline build or a
+prior run). For Agilex 5 the FSBL / U-Boot are **design-independent** (the
+handoff is in the bitstream), so you can **reuse the existing
+`u-boot-spl-dtb.hex` and `u-boot.itb`** and only re-merge them with the new
+bitstream — no Yocto rebuild required.
+
+**Host:** any machine with Quartus Prime Pro 26.1 (`quartus_pfg`,
+`quartus_pgm`) on PATH — **Windows is fine here**, no Yocto needed.
+
+**Inputs (gather into one working directory):**
+
+- `agilex5_devkit.sof` — from `quartus_sh -t build.tcl` (full JESD license →
+  a real `.sof`, not `_time_limited.sof`; see [ISSUE-016](potential_issues.md))
+- `u-boot-spl-dtb.hex`, `u-boot.itb` — from the Yocto deploy dir
+  (`build/tmp/deploy/images/agilex5e/`); reuse the baseline set or build via
+  [Procedure D.B](#procedure-db--full-deployable-build-yocto-bsp--image)
+- `qspi_helper.pfg`, `uboot_bin.sh` — from
+  [software/yocto_linux/scripts/](../projects/agilex5_devkit/software/yocto_linux/scripts/)
+
+**Steps:**
+
+1. Build (or locate) this design's `.sof`, then stage it under the name the
+   pfg expects:
+   ```bash
+   cd projects/agilex5_devkit
+   quartus_sh -t build.tcl                 # → output_files/agilex5_devkit.sof
+   cp output_files/agilex5_devkit.sof ghrd.sof
+   ```
+2. Merge the FSBL + U-Boot into a QSPI image built around **this** `.sof`:
+   ```bash
+   ./uboot_bin.sh                          # u-boot.itb → padded u-boot.bin
+   quartus_pfg -c qspi_helper.pfg          # → qspi_helper.hps.jic (+ .rpd, .map)
+   ```
+   The pfg embeds the FSBL via `hps_path=u-boot-spl-dtb.hex`. Equivalent
+   explicit form (no pfg):
+   ```bash
+   quartus_pfg -c ghrd.sof qspi_helper.jic \
+     -o device=MT25QU02G \
+     -o flash_loader=A5ED065BB32AE6SR0 \
+     -o hps_path=u-boot-spl-dtb.hex \
+     -o mode=ASX4 -o hps=1
+   ```
+   (See the device-ID gotcha in [D.3](#d3--gotchas) — the checked-in pfg
+   uses `flash_loader=A5ED065BB32AE4S`.)
+3. Regenerate the **fabric** RBF for the SD card so it matches the new design:
+   ```bash
+   quartus_pfg -c output_files/agilex5_devkit.sof ghrd.core.rbf \
+     -o hps=ON -o hps_core_only=ON
+   ```
+4. Program QSPI over JTAG:
+   ```bash
+   # Set the kit MSEL dipswitch to JTAG mode, power on, then:
+   jtagconfig --setparam 1 JtagClock 16M
+   quartus_pgm -c 1 -m jtag -o "pvi;qspi_helper.hps.jic"
+   ```
+5. Copy `ghrd.core.rbf` onto the SD FAT partition (replace the stale one),
+   then set MSEL back to **ASX4 (QSPI active-serial)** boot and power-cycle.
+
+**Pass criterion:** UART (115200 8N1 on J6) shows SDM → SPL → ATF → U-Boot
+banners, then the kernel boots to `… login:`. After login,
+`ad9176-config status` runs (Procedure 7.A).
+
+### Procedure D.B — Full deployable build (Yocto BSP + image)
+
+The canonical, reproducible flow the repo's Makefile drives. Needed when you
+have no prebuilt boot binaries, or you changed U-Boot/SPL/ATF/kernel/rootfs.
+
+**Host:** a **Linux** Yocto build host (Ubuntu 22.04+, `/bin/sh` → bash) —
+**not** the Windows firmware workstation. Host packages + kas setup are in
+[software/yocto_linux/README.md](../projects/agilex5_devkit/software/yocto_linux/README.md).
+
+1. Build the FPGA `.sof` (`quartus_sh -t build.tcl`).
+2. Stage the fabric RBF that Yocto folds into `kernel.itb` (the recipe wants
+   the name in `kas.yml`'s `FPGA_RBF_FILE`):
+   ```bash
+   quartus_pfg -c output_files/agilex5_devkit.sof output_files/ghrd.core.rbf \
+     -o hps=ON -o hps_core_only=ON
+   cp output_files/ghrd.core.rbf \
+     software/yocto_linux/meta-custom/recipes-fpga/fpga-bitstream/files/baseline_a55_hps_debug.core.rbf
+   ```
+3. Build the BSP + image (FSBL/SPL, ATF, U-Boot, kernel, rootfs):
+   ```bash
+   cd software/yocto_linux && kas build kas.yml
+   ```
+   Outputs land in `build/tmp/deploy/images/agilex5e/` — including
+   `u-boot-spl-dtb.hex`, `u-boot.itb`, `Image`, `kernel.itb`, and the rootfs
+   `gsrd-console-image-agilex5e.rootfs.wic`.
+4. **Or** let the GHRD Makefile orchestrate build + bootloader merge +
+   image postprocess in one shot (this kit's target):
+   ```bash
+   make software-yocto_linux_sd-install-sw     # (or: make install-sw  for all media)
+   ```
+   This runs the
+   [swbuild_config.mk](../projects/agilex5_devkit/swbuild_config.mk)
+   `software-yocto_linux_sd` chain: builds Yocto, then `sd-postprocess` runs
+   `uboot_bin.sh`, `quartus_pfg -c qspi_helper.pfg`, and the
+   `… -o hps_path=… ghrd.jic` merge — producing `qspi_helper.hps.jic`,
+   `ghrd.core.rbf`, `ghrd.hps.rbf`, and `agilex5_devkit_yocto_linux_sd.sof`
+   under `install/binaries/software/yocto_linux_sd/`.
+5. Program QSPI (Procedure D.A step 4) and prepare the SD card
+   ([Procedure D.C](#procedure-dc--prepare--refresh-the-sd-card)).
+
+### Procedure D.C — Prepare / refresh the SD card
+
+The SD card holds the kernel, device tree, the fabric `ghrd.core.rbf`, and
+the rootfs. Two options:
+
+- **Whole-disk WIC (clean install):**
+  ```bash
+  sudo dd if=gsrd-console-image-agilex5e.rootfs.wic of=/dev/sdX bs=1M && sync
+  ```
+  Overwrites the entire card (FAT boot partition + ext4 rootfs).
+- **In-place file copy (incremental):** mount the FAT partition and replace
+  only what changed — `ghrd.core.rbf`, `Image`/`kernel.itb`, `*.dtb`,
+  `u-boot.scr` — leaving the rootfs untouched. Use this when only the fabric
+  changed.
+
+### D.2 — When must I rebuild each artifact? (change matrix)
+
+| If you changed… | QSPI `.jic` | `core.rbf` (SD) | SD kernel/rootfs |
+|-----------------|:-----------:|:---------------:|:----------------:|
+| FPGA fabric only (DAC subsys, JESD, FMC pins) | recommended* | **yes** | no |
+| HPS / EMIF / pinmux / bridges (e.g. ISSUE-011 EMIF) | **yes** | yes | maybe (DT) |
+| U-Boot / SPL / ATF | **yes** | no | no |
+| Linux kernel / DT / rootfs / `ad9176-config` | no | no | **yes** |
+
+\*The QSPI `.jic` is built from the full `.sof`, so regenerating it after any
+compile keeps the embedded handoff in lock-step with the fabric. At minimum
+the `core.rbf` on SD must match the running fabric.
+
+### D.3 — Gotchas
+
+- **Device-ID consistency
+  ([CLAUDE.md §6 #10](../CLAUDE.md#6-critical-constraints)).** The checked-in
+  `qspi_*.pfg` declare `flash_loader=A5ED065BB32AE4S` and flash
+  `MT25QU02G`, while the qsf `DEVICE` is `A5ED065BB32AE6SR0`. The `…AE4S`
+  loader is the GSRD's generic loader and normally works; if `quartus_pfg`
+  rejects it, pass `-o flash_loader=A5ED065BB32AE6SR0`. Confirm the QSPI part
+  number against the DK-A5E065BB32AES1 user guide before trusting
+  `MT25QU02G` (note `swbuild_config.mk`'s U-Boot-only path even passes
+  `device=MT25QU128` — verify which is on your board).
+- **MSEL.** Programming the `.jic` over JTAG needs the kit in JTAG mode;
+  booting needs **ASX4** (active-serial x4 / QSPI). The exact dipswitch
+  pattern is specific to the DK-A5E065BB32AES1 — read it off the board's user
+  guide; do not copy another kit's pattern.
+- **IP license (confirmed full).** `build.tcl` emits a real
+  `output_files/agilex5_devkit.sof`, deployable permanently. If a workstation
+  ever lacks the JESD204B GTS license it emits `…_time_limited.sof`, which
+  still boots but halts the design ~1 h after configuration
+  ([ISSUE-016](potential_issues.md)) — never ship it.
+- **VADJ first.** Independent of boot, never let an image drive the FMC HSIO
+  bank before VADJ = 1.2 V
+  ([CLAUDE.md §6 #3](../CLAUDE.md#6-critical-constraints)).
+
+### D.4 — Failure paths
+
+- **No SDM / U-Boot output on UART at all** → FSBL not in the QSPI image.
+  Re-check that `quartus_pfg` ran with `hps_path=u-boot-spl-dtb.hex` and that
+  you flashed the resulting `.jic`/`.rpd`, **not** the bare `.sof`. Confirm
+  MSEL = ASX4.
+- **U-Boot SPL starts but `DDR:` / EMIF calibration hangs** → handoff
+  mismatch: you flashed a `.jic` built from the *baseline* `.sof`, or the
+  EMIF retarget was reverted. Rebuild the `.jic` from this design's `.sof`
+  (Procedure D.A) and see
+  [Procedure 1.B](#procedure-1b--emif-ddr4-1600-calibration-check).
+- **U-Boot runs but `fpga load` / `bridge enable` fails, or kernel hangs
+  probing the FPGA** → the `core.rbf` on SD does not match the handoff in
+  QSPI. Regenerate `core.rbf` from the **same** `.sof` you built the `.jic`
+  from.
+- **Kernel boots but `ad9176-config` cannot see the DAC CSRs** → not a boot
+  problem; see Procedures 4.A / 7.A and the LWS2F base
+  ([CLAUDE.md §6 #6](../CLAUDE.md#6-critical-constraints)).
+
+Log captures to [potential_issues.md](potential_issues.md).
+
+---
+
 ## Stage 1 — Repo merge & baseline retarget
 
 PLAN reference: [PLAN.md Stage 1](../PLAN.md#stage-1--repo-merge--baseline-retarget)
@@ -79,9 +341,19 @@ in Stage 1 — top-level SV has no FMC ports yet).
    ```bash
    quartus_pgm -m JTAG -c 1 -o "p;output_files/agilex5_devkit.sof"
    ```
-4. Open the UART console. Within ~5 seconds expect U-Boot text. If U-Boot
-   never appears: HPS EMIF init failed → see Procedure 1.B.
-5. **Pass criterion:**
+   > **NOTE — this is a fabric-only smoke test, not a Linux boot test.** On
+   > this HPS-first design the bare `.sof` contains **no FSBL/U-Boot SPL**, so
+   > programming it over JTAG configures the FPGA fabric but the **HPS will
+   > not boot** (no U-Boot, no Linux). That is expected — see
+   > [Deployable boot image](#deployable-boot-image--integrating-the-bootloader-read-first-if-linux-wont-boot).
+   > To exercise the full boot chain, program the **bootloader-integrated
+   > QSPI image** ([Procedure D.A](#procedure-da--fast-recovery-re-merge-fsbl-rebuild-qspi-image-reflash))
+   > and boot from QSPI (MSEL = ASX4) instead.
+4. Open the UART console. With the **QSPI boot image** programmed (not the
+   bare `.sof`), within ~5 seconds expect U-Boot text. If U-Boot never
+   appears: confirm the FSBL was merged and QSPI was flashed (see D.4
+   Failure paths), then suspect HPS EMIF init → see Procedure 1.B.
+5. **Pass criterion** (QSPI boot image in flash, MSEL = ASX4):
    - Heartbeat LED (top user LED) blinks at ~2 Hz
    - U-Boot prints `## SoC: Altera Agilex 5 Platform` (or similar)
    - UART eventually reaches `Yocto ... login:` prompt
