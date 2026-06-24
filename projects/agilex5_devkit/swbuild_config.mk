@@ -165,7 +165,7 @@ sd-postprocess: output_files/$(REVISION)_hps_debug.sof
 		./uboot_bin.sh && \
 		cp $(REVISION)_yocto_linux_sd.sof ghrd.sof && \
 		quartus_pfg -c qspi_helper.pfg && \
-		quartus_pfg -c ghrd.sof ghrd.jic -o device=MT25QU128 -o flash_loader=A5ED065BB32AE4S -o hps_path=u-boot-spl-dtb.hex -o mode=ASX4 -o hps=1 && \
+		quartus_pfg -c ghrd.sof ghrd.jic -o device=MT25QU02G -o flash_loader=A5ED065BB32AE4S -o hps_path=u-boot-spl-dtb.hex -o mode=ASX4 -o hps=1 && \
 		quartus_pfg -o hps=ON -c -o hps_path=u-boot-spl-dtb.hex $(REVISION)_hps_debug.sof ghrd.rbf
 
 	mkdir -p $(INSTALL_ROOT_BINARIES)/software/yocto_linux_sd

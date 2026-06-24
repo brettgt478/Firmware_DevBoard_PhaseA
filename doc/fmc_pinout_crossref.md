@@ -7,7 +7,9 @@ from two reference files in the repo root:
   (J34 FMC connector mapping)
 - [AD9176_Dev_Pinout.txt](../AD9176_Dev_Pinout.txt) -- AD9176-FMC-EBZ
   user-annotated mapping; **rightmost column is the FPGA BGA package
-  pin** for the Phase B targeted device `A5ED065BB32AE6SR0`.
+  pin** for the Phase B targeted device `A5ED065BB32AE4S` (production 065B;
+  the ES `A5ED065BB32AE6SR0` retarget was reverted — see ISSUE-011). The FMC
+  package-pin assignments are unaffected by the part revision.
 
 **Gotcha:** the `Agilex_FMC_Pinout.txt` "Pin Number" column is the
 VITA 57.1 FMC-connector grid coordinate (`C2`, `D8`, `H2`, etc.), NOT

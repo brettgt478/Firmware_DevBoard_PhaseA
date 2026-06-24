@@ -198,12 +198,22 @@ note into a Phase B wrapper comment instead.
 
 ## ISSUE-011: ES-silicon HPS EMIF retargeted to DDR4-1600 @ 800 MHz; DBI removed
 
-**Date:** 2026-05-15
+> **REVERTED 2026-06-24.** This Stage 1 ES retarget broke the boot chain: changing
+> the HPS EMIF changed the bitstream handoff, which no longer matched the prebuilt
+> bootloader, so Linux would not boot. Phase B re-adopted the **production** part
+> `A5ED065BB32AE4S` (stock DDR4-3200 @ 1066.667 MHz, `mem_dbi_n` exported) and a
+> **fabric-only** deploy model (HPS byte-stable; ship `ghrd.core.rbf` in
+> `kernel.itb`). See [CLAUDE.md §6 #10–#12](../CLAUDE.md#6-critical-constraints)
+> and [DESIGN_DECISION.md](../DESIGN_DECISION.md). The ES analysis below is kept
+> for the record, and as the recipe to *undo* during the Phase 1 migration.
+
+**Date:** 2026-05-15 (retarget) · 2026-06-24 (reverted)
 **Module:** `projects/agilex5_devkit/ip/hps_subsys/emif_io96b_hps.ip` and
 parent qsys plumbing (`hps_subsys.qsys`, `baseline_top.qsys`, `agilex5_devkit.sv`,
 `agilex5_devkit.qsf`)
-**Status:** Open — Phase B Stage 1 workaround, requires re-evaluation when ES
-silicon supports DDR4-3200
+**Status:** **Reverted** — production part re-adopted; fabric-only model. The
+"Resolution applied (2026-05-15)" steps below must be **undone** during the
+Phase 1 migration (restore the production EMIF IP, DDR4-3200, and the 5 DBI pins).
 
 **Description:**
 The upstream 065B baseline-a55 GHRD targets the production part

@@ -10,14 +10,22 @@ for someone walking into the project cold.
 
 The deployable build (`projects/agilex5_devkit/agilex5_devkit.qpf`) targets
 the **DK-A5E065BB32AES1 Agilex 5 E-Series 065B Premium Development Kit**
-(ES SR0 silicon, part `A5ED065BB32AE6SR0`) with an **Analog Devices
+(production 065B silicon, part `A5ED065BB32AE4S`) with an **Analog Devices
 AD9176-FMC-EBZ** mezzanine on the on-board FMC connector (J34).
+
+> **Design approach: fabric-only on the production GHRD.** Phase B keeps the HPS
+> (pin-mux, clocks, EMIF, peripherals) byte-stable against the production
+> baseline so the prebuilt bootloader boots unchanged; only the FPGA fabric
+> (`ghrd.core.rbf`) is regenerated and shipped inside `kernel.itb`. The Stage 1
+> ES retarget (`A5ED065BB32AE6SR0`, DDR4-1600) was reverted — see
+> [CLAUDE.md §6 #10–#12](../CLAUDE.md#6-critical-constraints),
+> [DESIGN_DECISION.md](../DESIGN_DECISION.md), and ISSUE-011.
 
 The bitstream provides:
 
-- Baseline Altera GSRD (HPS, EMIF DDR4-1600, USB3.1 PHY, NiosV debug
+- Baseline Altera GSRD (HPS, EMIF DDR4-3200, USB3.1 PHY, NiosV debug
   fabric, JTAG-to-Avalon master) -- inherited as-is from the upstream
-  `a5ed065es-premium-devkit-oobe/baseline-a55` reference.
+  **production** `a5ed065b-premium-devkit-oobe/baseline-a55` reference.
 - Phase A `dac_controller_0` IP wrapped as a Platform Designer
   component, providing NCO + JESD transport + sync + DcFifo + reg_bank.
 - Two `intel_jesd204b_gts` subsystem instances (one per AD9176 DAC
@@ -56,8 +64,8 @@ agilex5_devkit (top, projects/agilex5_devkit/agilex5_devkit.sv)
     |
     +-- u_hps_subsys (hps_subsys.qsys, unchanged baseline)
     |   +-- u_agilex_hps     A76 + A55 cluster, peripherals on IO48
-    |   +-- u_emif_hps       EMIF I/O 96B HPS DDR4-1600 (ES silicon cap;
-    |                        DBI pins intentionally unbonded -- see
+    |   +-- u_emif_hps       EMIF I/O 96B HPS DDR4-3200 (production baseline;
+    |                        DBI exported/bonded -- ES retarget reverted, see
     |                        ISSUE-011)
     |
     +-- u_fabric_subsys (fabric_subsys.qsys, unchanged baseline)
@@ -124,7 +132,7 @@ wires real GTS link status back to the controller. See
 | `fmc_gbtclk1` | 312.5 MHz | FMC `B20/B21` -> `AV16/AV21` (UX 4C) | `u_jesd_link1` PMA refclk via `u_xcvr_refclk_4c`. Required because Agilex 5 GTS cannot route a refclk across transceiver tiles (ISSUE-015). |
 | `jesd_link_clk` | 312.5 MHz | `u_jesd_link0.txphy_clk[0]` looped at top SV (see line 270 of `agilex5_devkit.sv`) | Drives both `u_jesd_link0.txlink_clk` and `u_jesd_link1.txlink_clk`; drives `u_clk_bridge_jesd`; clocks `u_sysref_capture` 2-stage synchronizer. |
 | `fmc_sysref` | low-rate, divides DEV_CLK | FMC `G6/G7 (LA00_CC)` -> `A45/B42` | Sampled to `jesd_link_clk` in `u_sysref_capture`, fed to both `u_jesd_link*.sysref` inputs as `sysref_captured`. |
-| HPS EMIF clocks | 800 MHz (DDR4-1600 cap on ES silicon) | EMIF refclk pad | HPS only; not visible to fabric clock tree. |
+| HPS EMIF clocks | 1066.667 MHz (DDR4-3200, production baseline) | EMIF refclk pad | HPS only; not visible to fabric clock tree. |
 | `altera_int_osc_clk` | ~125 MHz | internal oscillator | Reset sequencer + SLD JTAG hub fabric. |
 
 ### Asynchronous clock groups

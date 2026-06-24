@@ -42,12 +42,14 @@ The bitstream lands at
 evaluation mode -- see
 [doc/potential_issues.md ISSUE-016](doc/potential_issues.md)).
 
-> **This `.sof` is NOT bootable on its own.** It contains the FPGA fabric
-> and HPS handoff but **no bootloader (FSBL / U-Boot SPL)**. This is an
-> HPS-first kit, so a bare `.sof` configures the fabric but the HPS will not
-> boot Linux. To build a bootable QSPI image (bitstream + FSBL merged via
-> `quartus_pfg -o hps_path=…`) and program it, follow
-> [doc/integration.md → Deployable boot image](doc/integration.md#deployable-boot-image--integrating-the-bootloader-read-first-if-linux-wont-boot).
+> **The `.sof` is the fabric only — you deploy it inside `kernel.itb`.** Phase B
+> is fabric-only on the production GHRD: the HPS bootloader in QSPI is the stock
+> production image and is left untouched. Regenerate `ghrd.core.rbf`
+> (`quartus_pfg … -o hps_core_only=ON`) and repack it into `kernel.itb`. A bare
+> `.sof` programmed by itself configures the fabric but does **not** boot the
+> HPS. Full steps:
+> [doc/integration.md → Deployable boot image](doc/integration.md#deployable-boot-image--integrating-the-bootloader-read-first-if-linux-wont-boot)
+> (Procedure D.E).
 
 ### Run the regression suites
 
@@ -144,10 +146,14 @@ doc/                      Architecture, JESD bring-up, FMC pinout, issues
 See [doc/deferred_hw_gates.md](doc/deferred_hw_gates.md) for the full
 ledger.
 
-### Stage 1 baseline deviation
+### Stage 1 baseline deviation — reverted
 
-The HPS EMIF was retargeted from DDR4-3200 @ 1066.667 MHz (production
-silicon) to DDR4-1600 @ 800 MHz (ES SR0 silicon cap;
-[doc/potential_issues.md ISSUE-011](doc/potential_issues.md)). Five DBI
-pin assignments (`B119`, `AC90`, `V87`, `H87`, `B97`) are intentionally
-unbonded because the ES EMIF IP variant does not export `mem_dbi_n`.
+The Stage 1 ES retarget of the HPS EMIF (DDR4-3200 → DDR4-1600 @ 800 MHz, DBI
+removed) has been **rolled back**. Phase B is now a **fabric-only** delta on the
+**production** baseline: device `A5ED065BB32AE4S`, stock **DDR4-3200 @
+1066.667 MHz**, `mem_dbi_n` exported (the 5 DBI pins `B119`/`AC90`/`V87`/`H87`/`B97`
+bonded). The HPS is byte-stable so the prebuilt bootloader boots unchanged; only
+`ghrd.core.rbf` is regenerated and shipped in `kernel.itb`. See
+[CLAUDE.md §6 #10–#12](CLAUDE.md#6-critical-constraints),
+[DESIGN_DECISION.md](DESIGN_DECISION.md), and
+[doc/potential_issues.md ISSUE-011](doc/potential_issues.md).

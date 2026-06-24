@@ -4,6 +4,16 @@ Comprehensive stage-by-stage plan for building the deployable firmware on the DK
 
 For the rationale and high-level architecture see [CLAUDE.md](CLAUDE.md). Phase A's design description (preserved verbatim) is at [doc/phase_a_design_description.md](doc/phase_a_design_description.md).
 
+> **⚠ Design-approach update (2026-06-24) — supersedes the ES retarget below.**
+> Phase B is now a **fabric-only** delta on the **production** 065B GHRD. The
+> Stage 1 retarget to ES `A5ED065BB32AE6SR0` / DDR4-1600 was **reverted** (it
+> changed the HPS handoff and broke the prebuilt bootloader, so Linux would not
+> boot). The target device is **`A5ED065BB32AE4S`** with stock DDR4-3200; the
+> HPS is kept byte-stable and only `ghrd.core.rbf` is deployed (in `kernel.itb`).
+> Where stages below say "retarget to `A5ED065BB32AE6SR0`" or "DDR4-1600", read
+> them as historical. Authoritative now: [CLAUDE.md §6 #10–#12](CLAUDE.md#6-critical-constraints),
+> [DESIGN_DECISION.md](DESIGN_DECISION.md), and [doc/potential_issues.md ISSUE-011](doc/potential_issues.md).
+
 ---
 
 ## Context

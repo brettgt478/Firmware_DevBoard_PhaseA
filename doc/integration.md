@@ -43,12 +43,18 @@ image the board can actually **boot Linux** from, and why the bare `.sof`
 cannot. It is a prerequisite for every procedure below that boots Linux or
 runs `ad9176-config` (Procedures 1.A, 5.A, 7.A).
 
-> **TL;DR for "baseline boots, my build doesn't":** `build.tcl` produces only
-> `output_files/agilex5_devkit.sof`, which has **no HPS bootloader (FSBL /
-> U-Boot SPL) in it**. On this HPS-first kit the SDM has nothing to execute,
-> so the HPS never boots. The deployable image is the bitstream **plus** the
-> Yocto-built FSBL, merged with `quartus_pfg -o hps_path=…` and programmed to
-> **QSPI** as a `.jic`. Jump to [Procedure D.A](#procedure-da--fast-recovery-re-merge-fsbl-rebuild-qspi-image-reflash).
+> **TL;DR — the current model is fabric-only.** Phase B is now a **fabric-only**
+> delta on the production GHRD ([CLAUDE.md §6 #10–#12](../CLAUDE.md#6-critical-constraints)),
+> so the HPS bootloader in QSPI is the **stock production image and is left
+> untouched**. You deploy by regenerating only `ghrd.core.rbf` and repacking it
+> into `kernel.itb` — **[Procedure D.E](#procedure-de--deploy-fabric-only-via-kernelitb-repack-primary)**.
+> You do **not** rebuild or reflash the QSPI `.jic`.
+>
+> The QSPI re-merge flow (Procedures D.A–D.C, which merge a Yocto-built FSBL
+> into the bitstream with `quartus_pfg -o hps_path=…`) is now a **fallback** —
+> only for first-time QSPI provisioning, or if the HPS is ever deliberately
+> changed (which #11 forbids by default). Background on the boot chain and why a
+> bare `.sof` can't boot on its own: D.0 below.
 
 ### D.0 — Why a bare `.sof` never boots Linux on this kit
 
@@ -87,19 +93,24 @@ Two facts make the bare `.sof` a dead end:
    executes a boot instruction → no U-Boot banner, no Linux. The FPGA fabric
    still configures, so the heartbeat LED can blink — which is misleading.
 
-2. **The HPS handoff lives in the bitstream, and you changed it.** For
+2. **The HPS handoff lives in the bitstream — so don't change the HPS.** For
    Agilex 5 the entire HPS handoff (EMIF timing, pin mux, clocks, HPS↔FPGA
    bridge widths) is baked into the configuration bitstream by Quartus —
-   there is no separate handoff folder and no `bsp-editor` step. Phase B
-   retargeted the EMIF from DDR4-3200 to **DDR4-1600 @ 800 MHz**
-   ([ISSUE-011](potential_issues.md)). That timing is in *this* design's
-   bitstream only. Booting the **baseline** QSPI image (baseline handoff)
-   against this design is a mismatch.
+   there is no separate handoff folder and no `bsp-editor` step. Phase B's
+   Stage 1 retarget of the EMIF to DDR4-1600/800 MHz (ES silicon) changed the
+   handoff and broke the prebuilt bootloader. **That retarget has been reverted**
+   ([ISSUE-011](potential_issues.md)): Phase B is now **fabric-only** on the
+   production baseline (device `A5ED065BB32AE4S`, DDR4-3200), so the bitstream's
+   HPS handoff is **identical** to the production GHRD the prebuilt bootloader
+   expects. The HPS/QSPI image is therefore reused unchanged.
 
-**The reported symptom maps to fact #2:** the baseline SDM+FSBL image is
-still in QSPI and only the FPGA fabric was swapped, so the board boots the
-**baseline** handoff, not this design's. The fix is to rebuild the QSPI boot
-image from *this* `.sof` (with the FSBL merged) and reflash QSPI.
+**Why the fabric-only model fixes the symptom:** with the HPS byte-stable, the
+SDM+FSBL+handoff in QSPI matches the bitstream, so the prebuilt boot chain runs
+exactly as it does for the stock baseline. You change **only** the fabric and
+deliver it via `kernel.itb` ([Procedure D.E](#procedure-de--deploy-fabric-only-via-kernelitb-repack-primary)) —
+no QSPI reflash, no FSBL re-merge. Fact #1 still applies if you ever provision
+QSPI from scratch (the bare `.sof` then needs the FSBL merged — Procedures
+D.A–D.C), but that is the exception, not the deploy path.
 
 ### D.0.1 — The artifacts and where they live (this kit: QSPI `.jic` + rootfs on SD)
 
@@ -159,12 +170,12 @@ bitstream — no Yocto rebuild required.
    ```bash
    quartus_pfg -c ghrd.sof qspi_helper.jic \
      -o device=MT25QU02G \
-     -o flash_loader=A5ED065BB32AE6SR0 \
+     -o flash_loader=A5ED065BB32AE4S \
      -o hps_path=u-boot-spl-dtb.hex \
      -o mode=ASX4 -o hps=1
    ```
-   (See the device-ID gotcha in [D.3](#d3--gotchas) — the checked-in pfg
-   uses `flash_loader=A5ED065BB32AE4S`.)
+   (`flash_loader=A5ED065BB32AE4S` is the production part — it must match the
+   qsf `DEVICE`; see the device-ID gotcha in [D.3](#d3--gotchas).)
 3. Regenerate the **fabric** RBF for the SD card so it matches the new design:
    ```bash
    quartus_pfg -c output_files/agilex5_devkit.sof ghrd.core.rbf \
@@ -238,30 +249,218 @@ the rootfs. Two options:
   `u-boot.scr` — leaving the rootfs untouched. Use this when only the fabric
   changed.
 
+### Procedure D.F — One-time migration to the production part (Phase 1–3)
+
+> Run this **once** to convert the tree from the (reverted) ES retarget to the
+> production fabric-only baseline. After it passes, steady-state deploys use
+> Procedure D.E. **This is a build-machine procedure (Quartus 26.1):** the HPS
+> revert is a coupled IP + qsys + pin change that *must* be validated by a
+> Quartus regen — applying it half-way leaves the build broken, so do the whole
+> phase and honor the gates. The doc edits are already done; the source/IP edits
+> below are the remaining work.
+>
+> **What's already done in-repo (this change):** all Phase 4 docs;
+> `swbuild_config.mk` flash device → `MT25QU02G`. The `qspi_*.pfg` already use
+> `flash_loader=A5ED065BB32AE4S`.
+
+**Phase 1 — Restore the production HPS / EMIF (undo [ISSUE-011](potential_issues.md)).**
+
+Source of truth: the on-disk production GHRD
+`D:/agilex5e-ed-gsrd-main/a5ed065b-premium-devkit-oobe/baseline-a55/` (verified
+present: `hps_subsys.qsys`, `baseline_a55.qsf`, `ip/hps_subsys/emif_io96b_hps.ip`,
+`ip/hps_subsys/agilex_hps.ip`).
+
+1. Copy the production HPS + EMIF IP and the HPS subsystem wholesale into the
+   repo (overwrites the ES variants):
+   ```bash
+   GHRD=/d/agilex5e-ed-gsrd-main/a5ed065b-premium-devkit-oobe/baseline-a55
+   PRJ=projects/agilex5_devkit
+   cp "$GHRD/ip/hps_subsys/emif_io96b_hps.ip" "$PRJ/ip/hps_subsys/"
+   cp "$GHRD/ip/hps_subsys/agilex_hps.ip"     "$PRJ/ip/hps_subsys/"
+   cp "$GHRD/hps_subsys.qsys"                  "$PRJ/hps_subsys.qsys"
+   ```
+2. `agilex5_devkit.qsf`: set the device and restore the 5 DBI pins.
+   - `set_global_assignment -name DEVICE A5ED065BB32AE6SR0` → `… A5ED065BB32AE4S`.
+   - Re-add these 10 lines (verbatim from `$GHRD/baseline_a55.qsf:422-431`),
+     in the EMIF section near the other `emif_hps_emif_mem_0_*` assignments:
+     ```tcl
+     set_location_assignment PIN_B119 -to emif_hps_emif_mem_0_mem_dbi_n[0]
+     set_instance_assignment -name IO_STANDARD "1.2-V POD" -to emif_hps_emif_mem_0_mem_dbi_n[0]
+     set_location_assignment PIN_AC90 -to emif_hps_emif_mem_0_mem_dbi_n[1]
+     set_instance_assignment -name IO_STANDARD "1.2-V POD" -to emif_hps_emif_mem_0_mem_dbi_n[1]
+     set_location_assignment PIN_V87 -to emif_hps_emif_mem_0_mem_dbi_n[2]
+     set_instance_assignment -name IO_STANDARD "1.2-V POD" -to emif_hps_emif_mem_0_mem_dbi_n[2]
+     set_location_assignment PIN_H87 -to emif_hps_emif_mem_0_mem_dbi_n[3]
+     set_instance_assignment -name IO_STANDARD "1.2-V POD" -to emif_hps_emif_mem_0_mem_dbi_n[3]
+     set_location_assignment PIN_B97 -to emif_hps_emif_mem_0_mem_dbi_n[4]
+     set_instance_assignment -name IO_STANDARD "1.2-V POD" -to emif_hps_emif_mem_0_mem_dbi_n[4]
+     ```
+   - Also delete the ISSUE-011 comment block in the qsf that says these pins are
+     "now unbonded". Then grep the qsf and all `ip/**/*.ip` for `AE6SR0` — there
+     must be **none** left.
+3. `agilex5_devkit.sv`: restore the DBI port + connection ISSUE-011 removed
+   (verbatim from `$GHRD/baseline_a55.sv:34` and `:210`):
+   - top-level port — add alongside the other `emif_hps_emif_mem_0_*` ports:
+     ```systemverilog
+     inout  wire [  4:0] emif_hps_emif_mem_0_mem_dbi_n,
+     ```
+   - `u_baseline_top` instance hookup — add after the
+     `.emif_hps_emif_ref_clk_0_clk (…)` line:
+     ```systemverilog
+     .emif_hps_emif_mem_0_mem_dbi_n        (emif_hps_emif_mem_0_mem_dbi_n),
+     ```
+4. `baseline_top.upstream.qsys` (the frozen snapshot build.tcl regenerates from):
+   re-add the single DBI `<port>` block ISSUE-011 removed, into the
+   `interface`/`ports` list of the top module (next to the other
+   `emif_hps_emif_mem_0_*` ports). In the `.qsys` the port list is stored
+   **HTML-escaped**, exactly as in `$GHRD/baseline_top.qsys:7126-7134`:
+   ```xml
+                       &lt;port&gt;
+                           &lt;name&gt;emif_hps_emif_mem_0_mem_dbi_n&lt;/name&gt;
+                           &lt;role&gt;mem_dbi_n&lt;/role&gt;
+                           &lt;direction&gt;Bidir&lt;/direction&gt;
+                           &lt;width&gt;5&lt;/width&gt;
+                           &lt;lowerBound&gt;0&lt;/lowerBound&gt;
+                           &lt;vhdlType&gt;STD_LOGIC_VECTOR&lt;/vhdlType&gt;
+                           &lt;terminationValue&gt;0&lt;/terminationValue&gt;
+                       &lt;/port&gt;
+   ```
+   (Unescaped, that is a `<port>` with `<name>emif_hps_emif_mem_0_mem_dbi_n</name>`,
+   `<role>mem_dbi_n</role>`, `<direction>Bidir</direction>`, `<width>5</width>`.)
+   The Phase B fabric patches (`baseline_top_phaseb_patches.tcl`) re-apply on top
+   automatically. **Simplest alternative:** since `hps_subsys.qsys` and the top
+   are inherited unchanged from the baseline, you may instead re-snapshot
+   `baseline_top.upstream.qsys` directly from `$GHRD/baseline_top.qsys` and let
+   the patch script reapply the Phase B fabric edits.
+5. Regenerate + compile, then **gate on the handoff**:
+   ```bash
+   cd projects/agilex5_devkit
+   quartus_sh -t build.tcl --project-only      # qsys/IP regen must be clean
+   quartus_sh -t build.tcl                      # full compile → .sof
+   quartus_pfg -c output_files/agilex5_devkit.sof ghrd.hps.rbf \
+     -o hps=ON -o hps_path=<prebuilt>/u-boot-spl-dtb.hex
+   ```
+   **Gate (critical):** the resulting `ghrd.hps.rbf` must match the production
+   baseline's HPS image (same EMIF/pin-mux/clock handoff — ideally byte-identical
+   bar timestamps). If it differs, an HPS delta remains; find it before going on.
+   A clean handoff is what lets the **stock** prebuilt bootloader boot unchanged.
+
+**Phase 2 — Regenerate fabric IP for the production part.**
+
+Changing the device means the JESD204B GTS, `xcvr_refclk`, and transceiver
+primitives must be regenerated for `A5ED065BB32AE4S` ([CLAUDE.md §6 #10](../CLAUDE.md#6-critical-constraints)).
+`quartus_ipgenerate` (run by `build.tcl`) regenerates from the `.ip`/`.qsys` for
+the current device; if any IP reports a device/stepping mismatch, force an
+upgrade:
+```bash
+# from projects/agilex5_devkit (uses the Makefile ip-upgrade target on a build host):
+make agilex5_devkit-ip-upgrade        # or: quartus_sh --ip_upgrade agilex5_devkit -revision agilex5_devkit -mode all
+quartus_sh -t build.tcl               # rebuild
+```
+**Gate:** full compile clean; fit WNS ≥ 0.5 ns; ALM/M20K/DSP/GTS within budget;
+no wrong-stepping primitive warnings.
+
+**Phase 3 — Deploy fabric-only.** Proceed to
+[Procedure D.E](#procedure-de--deploy-fabric-only-via-kernelitb-repack-primary):
+emit `ghrd.core.rbf`, repack `kernel.itb`, copy to SD, boot. The QSPI image and
+bootloader stay the stock production ones — untouched.
+
+**Rollback:** the ES analysis and the exact removed blocks are in
+[ISSUE-011](potential_issues.md); `git checkout` the pre-migration commit to
+restore the ES state.
+
+---
+
+### Procedure D.E — Deploy fabric-only via `kernel.itb` repack (PRIMARY)
+
+**Goal:** ship a new FPGA fabric to a board that already boots the stock
+production GHRD, without touching the HPS, QSPI, or the bootloader. This is the
+default Phase B deploy path (CLAUDE.md §6 #12).
+
+**Preconditions:**
+
+- The board already boots Linux from the **stock production** image (QSPI
+  `.jic` + SD). If it does not yet, provision QSPI once via Procedure D.A/D.B.
+- Your design is fabric-only (CLAUDE.md §6 #11): HPS untouched, device
+  `A5ED065BB32AE4S`, EMIF DDR4-3200. **Verify** the generated `ghrd.hps.rbf` is
+  byte-identical to the production baseline's before trusting this path — if it
+  differs, you changed the HPS and must fall back to the QSPI flow.
+
+**Host:** Quartus on PATH (Windows OK) for the RBF; a Linux/WSL2 shell with
+`u-boot-tools` (`mkimage`/`dumpimage`) for the repack.
+
+**Steps:**
+
+1. Build the bitstream and emit the **core-only** RBF (fabric, no HPS):
+   ```bash
+   cd projects/agilex5_devkit
+   quartus_sh -t build.tcl                                   # → output_files/agilex5_devkit.sof
+   quartus_pfg -c output_files/agilex5_devkit.sof output_files/agilex5_devkit.core.rbf \
+     -o hps=ON -o hps_core_only=ON
+   ```
+2. Repack the new core RBF into `kernel.itb` (WSL2 / Linux; no Yocto rebuild):
+   ```bash
+   cp kernel.itb kernel.itb.bak       # always back up first
+   dumpimage -l kernel.itb            # inspect FIT nodes/configs; note the fpga node + Image/dtb
+   # extract Image + dtb(s); author kernel.its referencing agilex5_devkit.core.rbf
+   mkimage -f kernel.its kernel.itb   # → new kernel.itb embedding the new RBF
+   ```
+   The Yocto image sets `FPGA_ENABLE_CORE_PGM=1`, so `bootm` programs this
+   embedded RBF during boot.
+3. Copy the new `kernel.itb` to the SD card **FAT** partition (replace the
+   existing one). Leave QSPI and the rootfs untouched.
+4. Power-cycle. UART shows the stock boot chain (SDM → SPL → ATF → U-Boot →
+   kernel); during `bootm` the fabric is programmed from the embedded RBF.
+
+**Pass criterion:** Linux reaches `login:` exactly as the stock baseline, and
+`devmem` reads the DAC subsystem ID register (Procedure 4.A / 7.A), proving the
+*new* fabric is live.
+
+**Notes / pitfalls:**
+
+- **Only one thing should program the fabric.** With `FPGA_ENABLE_CORE_PGM=1`
+  the `kernel.itb` RBF wins at `bootm`; a separate `fpga load` in the U-Boot env
+  or a runtime DT overlay can be silently overwritten ([DESIGN_DECISION.md](../DESIGN_DECISION.md) D4).
+  To use a standalone `core.rbf` on the FAT loaded by `fpga load` instead,
+  disable `FPGA_ENABLE_CORE_PGM`.
+- If the new fabric needs a Linux device-tree change (new bridge node /
+  address), update the kernel DTB in the same `kernel.itb` repack.
+- The DAC CSR base may move when rebased on the production GHRD's bridge window;
+  keep [dac_subsys_regs.h](../software/ad9176_config/dac_subsys_regs.h) and the
+  Linux DT offsets in sync ([CLAUDE.md §6 #6](../CLAUDE.md#6-critical-constraints)).
+
+---
+
 ### D.2 — When must I rebuild each artifact? (change matrix)
 
-| If you changed… | QSPI `.jic` | `core.rbf` (SD) | SD kernel/rootfs |
-|-----------------|:-----------:|:---------------:|:----------------:|
-| FPGA fabric only (DAC subsys, JESD, FMC pins) | recommended* | **yes** | no |
-| HPS / EMIF / pinmux / bridges (e.g. ISSUE-011 EMIF) | **yes** | yes | maybe (DT) |
+| If you changed… | QSPI `.jic` (HPS) | `core.rbf` in `kernel.itb` | SD kernel/rootfs |
+|-----------------|:-----------------:|:--------------------------:|:----------------:|
+| FPGA fabric only (DAC subsys, JESD, FMC pins) — the normal case | **no** (byte-stable) | **yes** (Procedure D.E) | no |
+| HPS / EMIF / pinmux / bridges — **forbidden by [§6 #11](../CLAUDE.md#6-critical-constraints)** | **yes** + rebuild bootloader | yes | maybe (DT) |
 | U-Boot / SPL / ATF | **yes** | no | no |
-| Linux kernel / DT / rootfs / `ad9176-config` | no | no | **yes** |
+| Linux kernel / DT / rootfs / `ad9176-config` | no | no (or DT inside the itb) | **yes** |
 
-\*The QSPI `.jic` is built from the full `.sof`, so regenerating it after any
-compile keeps the embedded handoff in lock-step with the fabric. At minimum
-the `core.rbf` on SD must match the running fabric.
+The whole point of the fabric-only model: a normal change touches **only** the
+`core.rbf` embedded in `kernel.itb`. The QSPI `.jic` (HPS + bootloader) is the
+stock production image and is reprogrammed **only** for first-time provisioning
+or a (discouraged) HPS change.
 
 ### D.3 — Gotchas
 
 - **Device-ID consistency
-  ([CLAUDE.md §6 #10](../CLAUDE.md#6-critical-constraints)).** The checked-in
-  `qspi_*.pfg` declare `flash_loader=A5ED065BB32AE4S` and flash
-  `MT25QU02G`, while the qsf `DEVICE` is `A5ED065BB32AE6SR0`. The `…AE4S`
-  loader is the GSRD's generic loader and normally works; if `quartus_pfg`
-  rejects it, pass `-o flash_loader=A5ED065BB32AE6SR0`. Confirm the QSPI part
-  number against the DK-A5E065BB32AES1 user guide before trusting
-  `MT25QU02G` (note `swbuild_config.mk`'s U-Boot-only path even passes
-  `device=MT25QU128` — verify which is on your board).
+  ([CLAUDE.md §6 #10](../CLAUDE.md#6-critical-constraints)).** Now that Phase B
+  targets the production part, **every** device-targeting field must read
+  `A5ED065BB32AE4S`: the qsf `DEVICE`, all IP `.ip` device fields, and the
+  `flash_loader` in `qspi_helper.pfg` / `qspi_boot.pfg` /
+  [swbuild_config.mk](../projects/agilex5_devkit/swbuild_config.mk). The
+  checked-in pfgs already use `flash_loader=A5ED065BB32AE4S` — they were *ahead*
+  of the qsf, which the Phase 1 migration brings in line by reverting the qsf
+  from the ES `A5ED065BB32AE6SR0` back to `A5ED065BB32AE4S`. Mixing the two
+  (production loader against an ES bitstream, or vice-versa) produces a
+  wrong-stepping SDM/config image that silently fails to boot. Confirm the QSPI
+  part against the DK-A5E065BB32AES1 user guide before trusting `MT25QU02G`
+  (note `swbuild_config.mk`'s U-Boot-only path passes `device=MT25QU128` — fix
+  it to `MT25QU02G` unless your board truly has the smaller part).
 - **MSEL.** Programming the `.jic` over JTAG needs the kit in JTAG mode;
   booting needs **ASX4** (active-serial x4 / QSPI). The exact dipswitch
   pattern is specific to the DK-A5E065BB32AES1 — read it off the board's user
@@ -282,10 +481,11 @@ the `core.rbf` on SD must match the running fabric.
   you flashed the resulting `.jic`/`.rpd`, **not** the bare `.sof`. Confirm
   MSEL = ASX4.
 - **U-Boot SPL starts but `DDR:` / EMIF calibration hangs** → handoff
-  mismatch: you flashed a `.jic` built from the *baseline* `.sof`, or the
-  EMIF retarget was reverted. Rebuild the `.jic` from this design's `.sof`
-  (Procedure D.A) and see
-  [Procedure 1.B](#procedure-1b--emif-ddr4-1600-calibration-check).
+  mismatch: the bitstream's HPS handoff doesn't match the prebuilt SPL. In the
+  fabric-only model this means the HPS was inadvertently changed (e.g. an EMIF
+  edit) — confirm `ghrd.hps.rbf` is byte-identical to the production baseline
+  and that the device is `A5ED065BB32AE4S` (DDR4-3200), not the reverted ES
+  config. See [Procedure 1.B](#procedure-1b--emif-ddr4-3200-calibration-check).
 - **U-Boot runs but `fpga load` / `bridge enable` fails, or kernel hangs
   probing the FPGA** → the `core.rbf` on SD does not match the handoff in
   QSPI. Regenerate `core.rbf` from the **same** `.sof` you built the `.jic`
@@ -311,14 +511,17 @@ Per Stage 1 verify gate, only **one** hardware test is queued:
 
 (See [deferred_hw_gates.md → Stage 1 verify 5](deferred_hw_gates.md#stage-1-verify-5-baseline-yocto-image-boot).)
 
-A second issue lurks that is NOT in the PLAN's gate list but **must** be
-checked the first time the kit is powered on with this firmware: the
-EMIF retarget from DDR4-3200 (production) to DDR4-1600 @ 800 MHz (ES SR0)
-documented as [ISSUE-011](potential_issues.md#issue-011-es-silicon-hps-emif-retargeted-to-ddr4-1600--800-mhz-dbi-removed).
+> **⚠ Reverted:** the Stage 1 ES-silicon EMIF retarget (DDR4-3200 → DDR4-1600 @
+> 800 MHz, DBI removed) has been **rolled back** ([ISSUE-011](potential_issues.md)).
+> Phase B is now fabric-only on the **production** baseline — device
+> `A5ED065BB32AE4S`, stock **DDR4-3200**, DBI bonded. The EMIF is therefore the
+> unmodified production config, validated by the baseline boot itself.
+> **Procedures 1.B–1.D below are historical** (they checked the reverted ES
+> config); retained for the record but no longer the active gate.
 
 ### Procedure 1.A — Bitstream boot smoke test
 
-**Goal:** confirm the retargeted `.sof` configures the FPGA, the HPS comes
+**Goal:** confirm the `.sof` configures the FPGA, the HPS comes
 out of reset, and the heartbeat LED blinks.
 
 **Hardware:** dev kit only; AD9176-FMC-EBZ optional (FMC port is unused
@@ -334,9 +537,9 @@ in Stage 1 — top-level SV has no FMC ports yet).
    quartus_sh -t build.tcl
    ```
    Expect `output_files/agilex5_devkit.sof` to appear after ~30-60 min.
-   If the build fails on `MEM_OPERATING_FREQ_MHZ`, **stop** —
-   [ISSUE-011](potential_issues.md#issue-011-es-silicon-hps-emif-retargeted-to-ddr4-1600--800-mhz-dbi-removed)
-   was reverted somewhere.
+   If the build fails on `MEM_OPERATING_FREQ_MHZ`, the EMIF IP/part pairing is
+   inconsistent — confirm device `A5ED065BB32AE4S` with the production DDR4-3200
+   EMIF IP (see [ISSUE-011](potential_issues.md)).
 3. Power on the kit. With JTAG attached, program over JTAG:
    ```bash
    quartus_pgm -m JTAG -c 1 -o "p;output_files/agilex5_devkit.sof"
@@ -359,11 +562,15 @@ in Stage 1 — top-level SV has no FMC ports yet).
    - UART eventually reaches `Yocto ... login:` prompt
    - No `EMIF calibration FAILED` lines in the boot log
 
-### Procedure 1.B — EMIF DDR4-1600 calibration check
+### Procedure 1.B — EMIF DDR4-3200 calibration check
 
-**Goal:** confirm the ES-silicon-stepping EMIF retarget calibrated cleanly
-at 800 MHz. If Procedure 1.A's UART prints `EMIF cal FAILED` or
-hangs before U-Boot, run this.
+> **Historical note:** this procedure originally validated the reverted ES
+> DDR4-1600/800 MHz retarget. With the production DDR4-3200 config restored, EMIF
+> calibration is the stock-baseline path (already proven by the baseline boot).
+> The steps below still apply as a generic EMIF-cal check.
+
+**Goal:** confirm the production-stepping EMIF calibrated cleanly. If
+Procedure 1.A's UART prints `EMIF cal FAILED` or hangs before U-Boot, run this.
 
 **Method 1 — System Console (no Linux required):**
 
@@ -390,11 +597,16 @@ In U-Boot console:
 => md.l 0xffd12000 16    # SDM EMIF status registers
 ```
 
-### Procedure 1.C — Confirm removed DBI pins are inert
+### Procedure 1.C — Confirm removed DBI pins are inert (OBSOLETE)
 
-**Goal:** the 5 pins formerly assigned to `mem_0_dbi_n[0..4]` (PIN_B119,
-AC90, V87, H87, B97) should be floating (high-Z) after the retarget. If
-they have residual drive, they could glitch adjacent DDR4 signals.
+> **Obsolete after the ISSUE-011 revert.** DBI is back: `mem_dbi_n` is exported
+> by the production EMIF IP and PIN_B119/AC90/V87/H87/B97 are **bonded** again.
+> There are no "removed DBI pins" to check. Disregard this procedure unless you
+> are intentionally re-doing the (discouraged) ES retarget.
+
+**Goal (historical):** the 5 pins formerly assigned to `mem_0_dbi_n[0..4]`
+(PIN_B119, AC90, V87, H87, B97) should be floating (high-Z) after the ES
+retarget. If they have residual drive, they could glitch adjacent DDR4 signals.
 
 **Steps:**
 
@@ -409,8 +621,8 @@ they have residual drive, they could glitch adjacent DDR4 signals.
 
 ### Procedure 1.D — DDR4 stress test (deferred to first hardware turn-on)
 
-**Goal:** confirm DDR4-1600 @ 800 MHz is stable over a sustained workload
-(the production-stepping firmware would have run at DDR4-3200).
+**Goal:** confirm DDR4-3200 @ 1066.667 MHz (the restored production config) is
+stable over a sustained workload.
 
 **Steps:**
 
@@ -420,8 +632,8 @@ they have residual drive, they could glitch adjacent DDR4 signals.
    apt install memtester      # or build from source
    memtester 1024M 5          # 5 passes over 1 GiB
    ```
-3. **Pass criterion:** zero errors across 5 passes. Total runtime should
-   be ~25 min at 800 MHz; at 1066.667 MHz it would be ~19 min.
+3. **Pass criterion:** zero errors across 5 passes (~19 min at DDR4-3200 /
+   1066.667 MHz).
 
 ---
 

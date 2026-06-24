@@ -6,9 +6,10 @@ This repository builds the deployable FPGA firmware for the **DK-A5E065BB32AES1 
 
 Phase B = baseline Altera GSRD + the Phase A `dac_controller_0` IP + JESD204B GTS Subsystem + a fabric SPI master for AD9176 register access + an `ad9176-config` Linux user-space tool. The HPS runs Yocto Linux. The Phase A IP is unchanged at the source level; it is wrapped as a Platform Designer component and instantiated inside a new `dac_subsys.qsys`.
 
-- **Device:** A5ED065BB32AE6SR0 (Agilex 5 E-Series 065B, ES silicon)
+- **Device:** A5ED065BB32AE4S (Agilex 5 E-Series 065B, production silicon — the part the upstream 065B GHRD natively targets). The Stage 1 retarget to ES `A5ED065BB32AE6SR0` was **reverted**: the ES handoff/EMIF diverged from the prebuilt bootloader and would not boot Linux. See §6 #10–#12 and [doc/potential_issues.md ISSUE-011](doc/potential_issues.md).
 - **Toolchain:** Quartus Prime Pro 26.1, Questa Pro 26.1, Yocto (meta-custom layer)
 - **HDL:** VHDL-2008 for all custom RTL. Baseline GHRD SystemVerilog is preserved as-is.
+- **Change doctrine (read this first):** Phase B is a **fabric-only** delta on the known-good production GHRD. The HPS (pin-mux, clocks, PLLs, EMIF, peripherals) is left **byte-stable** so the prebuilt bootloader + handoff boots unchanged; only `ghrd.core.rbf` (the fabric) is regenerated and deployed (embedded in `kernel.itb`). The HPS/QSPI image is never rebuilt. This is the design approach proven by the working sibling project — see [DESIGN_DECISION.md](DESIGN_DECISION.md) and §6 #10–#12.
 
 ---
 
@@ -123,18 +124,20 @@ The `doc/fmc_pinout_crossref.md` referenced in earlier drafts of this file is no
 ### Upstream GHRD reference (off-tree)
 
 The upstream Altera GHRD lives at `D:/agilex5e-ed-gsrd-main/` (outside the
-Phase B repo). Useful when the Phase B repo is missing a baseline-derived
-artifact — Stage 1 retargeting silently dropped some, e.g. the 48 HPS IO48
-pin locations recovered in Stage 4 (see [doc/potential_issues.md ISSUE-013](doc/potential_issues.md)).
-Search order for missing pin assignments / qsys parameters:
+Phase B repo). Phase B is now rebased on the **production 065B** baseline (the
+part the dev kit actually boots — see [DESIGN_DECISION.md](DESIGN_DECISION.md));
+the Stage 1 ES retarget was reverted (ISSUE-011). Use it as the source of truth
+for HPS/EMIF IP, the `baseline_top.upstream.qsys` snapshot, HPS pin locations,
+and the `qspi_*.pfg` flash-loader/device values. Search order:
 
-1. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
-   — most complete for HPS IO48 peripheral pin LOCATIONS.
-2. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-oobe/baseline-a55/baseline_a55.qsf`
-   — Phase B Stage 0 baseline source; has IO_STANDARD / pull-up / drive
-   strength but no `set_location_assignment` for HPS pins.
-3. `D:/agilex5e-ed-gsrd-main/a5ed065b-premium-devkit-emmc/baseline-a55/baseline_a55.qsf`
-   — production-silicon (non-ES) variant; last-resort cross-check.
+1. `D:/agilex5e-ed-gsrd-main/a5ed065b-premium-devkit-oobe/baseline-a55/`
+   — **authoritative**: the production-silicon baseline Phase B is rebased on
+   (device `A5ED065BB32AE4S`, DDR4-3200, `flash_loader=A5ED065BB32AE4S`).
+   Source of truth for HPS/EMIF IP and HPS pin LOCATIONS.
+2. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-debug2/legacy-baseline/legacy_baseline.qsf`
+   — ES legacy baseline; HPS IO48 pin LOCATION cross-check only.
+3. `D:/agilex5e-ed-gsrd-main/a5ed065es-premium-devkit-oobe/baseline-a55/baseline_a55.qsf`
+   — the original (now-reverted) Stage 0 ES baseline; historical reference only.
 
 ### Build commands
 
@@ -245,9 +248,11 @@ These are sticky — every change must respect them or builds fail or hardware b
 
 9. **AD9176 SPI is driven from fabric**, never from HPS pins. `hps_spim0` is hardwired to IO48 on this kit and cannot reach FMC. Driving SPI any other way breaks the architecture.
 
-10. **Device part is `A5ED065BB32AE6SR0` (ES silicon).** If you regenerate IP from a different part, Qsys will silently produce wrong-stepping primitives. Always confirm the qsf `DEVICE` line and IP `.ip` device fields agree.
+10. **Device part is `A5ED065BB32AE4S` (production 065B silicon).** This is the part the upstream 065B GHRD natively targets and the part the dev kit boots — confirmed against the working fabric-only sibling design ([DESIGN_DECISION.md](DESIGN_DECISION.md)). The Stage 1 retarget to ES `A5ED065BB32AE6SR0` was **reverted** (ISSUE-011): the ES handoff/EMIF diverged from the prebuilt bootloader and would not boot. If you regenerate IP from a different part, Qsys silently produces wrong-stepping primitives — always confirm the qsf `DEVICE` line, every IP `.ip` device field, **and** the `quartus_pfg` `flash_loader` all read `A5ED065BB32AE4S`.
 
-11. **HPS EMIF runs DDR4-1600 @ 800 MHz** because ES SR0 silicon caps `MEM_OPERATING_FREQ_MHZ` at 800. `mem_dbi_n` is NOT exported by the ES EMIF IP variant — five pin assignments (PIN_B119, AC90, V87, H87, B97) are intentionally unbonded. Do not bump the EMIF frequency or re-introduce DBI pin assignments without re-evaluating the ES silicon spec. See [doc/potential_issues.md ISSUE-011](doc/potential_issues.md).
+11. **Do not modify the HPS — it must stay byte-stable against the production baseline.** HPS pin-mux, clocks, PLLs, EMIF, and peripherals are inherited unchanged from the production GHRD so the prebuilt SPL/U-Boot/handoff boots without a rebuild. The HPS EMIF runs the baseline **DDR4-3200 @ 1066.667 MHz** and `mem_dbi_n` IS exported (the 5 DBI pins PIN_B119/AC90/V87/H87/B97 are bonded). The Stage 1 ES retarget to DDR4-1600/800 MHz with DBI removed was reverted (ISSUE-011). Any HPS/EMIF change regenerates the handoff and breaks the prebuilt boot chain; if one is ever truly required, you must rebuild the bootloader from the matching 26.1 sources rather than reuse the prebuilt.
+
+12. **Deploy fabric changes via `ghrd.core.rbf` embedded in `kernel.itb`, never by reflashing the HPS/QSPI image.** Because the HPS is byte-stable (#11), the periphery image (`ghrd.hps.rbf` / the QSPI `.jic`) is identical to the production baseline and is left untouched. Regenerate only the core RBF (`quartus_pfg … -o hps_core_only=ON`) and repack it into `kernel.itb` (`mkimage`). See [doc/integration.md](doc/integration.md) Procedure D.E and [DESIGN_DECISION.md](DESIGN_DECISION.md) D3–D4.
 
 ---
 
